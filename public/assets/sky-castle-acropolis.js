@@ -13,7 +13,7 @@ export function buildAcropolis(THREE, materials, terrain) {
   group.position.set(anchor.x, 0, anchor.z);
   group.rotation.y = yaw;
   const world = (x,z) => ({x:anchor.x+cosine*x+sine*z,z:anchor.z-sine*x+cosine*z});
-  const ground = (x,z) => {const p=world(x,z);return terrain.height(p.x,p.z);};
+  const ground = (x,z) => {const p=world(x,z),y=terrain.surfaceHeight?.(p.x,p.z);return Number.isFinite(y)?y:terrain.height(p.x,p.z);};
   const bags = new Map(), disposable = new Set();
   const matrix = new THREE.Matrix4(), normalMatrix = new THREE.Matrix3();
   const point = new THREE.Vector3(), normal = new THREE.Vector3(), quaternion = new THREE.Quaternion();
@@ -180,6 +180,18 @@ export function buildAcropolis(THREE, materials, terrain) {
     if(Math.abs(z-7.8)<entryDistance){entryDistance=Math.abs(z-7.8);entryX=x;}
   }
   gateX=Math.max(-3.2,Math.min(3.2,gateX));
+  // The terrain trail meets this paved entrance; it must not continue as a
+  // second almost-coplanar strip through the flagstones and keep courtyard.
+  const approach=terrain.group.getObjectByName('limestone-walking-route');
+  if(approach&&terrain.scale>2){
+    const p=approach.geometry.attributes.position,columns=approach.geometry.userData.pathColumns||1,stride=columns+1,rows=p.count/stride;
+    for(let row=0;row<rows;row++){
+      const x=(p.getX(row*stride)+p.getX(row*stride+columns))/2-anchor.x;
+      const z=(p.getZ(row*stride)+p.getZ(row*stride+columns))/2-anchor.z;
+      if(sine*x+cosine*z<=7.80){approach.geometry.setDrawRange(0,row*columns*6);break;}
+    }
+  }
+
   const gateBase=Math.max(ground(gateX,gateZ),ground(gateX-.75,gateZ),ground(gateX+.75,gateZ))+.015,opening=.59,spring=.72,ring=.23;
   for(const side of [-1,1]){
     const x=gateX+side*(opening+ring*.5);

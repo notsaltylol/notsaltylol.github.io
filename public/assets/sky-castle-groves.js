@@ -1,4 +1,5 @@
 import { createDetailView } from './sky-castle-lod.js';
+import { createHabitat } from './sky-castle-habitat.js';
 import { buildTree as defaultBuildTree } from './sky-castle-models.js';
 
 /**
@@ -68,17 +69,16 @@ export function buildGroves(THREE, materials, terrain, {
   for (let i=0;i<96;i++) bound = Math.max(bound, terrain.radius(i/96*Math.PI*2));
   if (!Number.isFinite(bound) || bound <= 0) throw new Error('Groves require a positive terrain.radius().');
   const tileSize = Math.max(5, Math.min(20, bound*.30));
-  const centers = [];
-  const centerTarget = Math.max(3, Math.ceil(requested/25));
-  const minimumPatchRadius = Math.max(1.5, Math.sqrt(requested/centerTarget)*.50, bound*.045);
-  for (let attempt=0;centers.length<centerTarget && attempt<centerTarget*250;attempt++) {
-    const x=between(-bound,bound),z=between(-bound,bound);
-    if (!allowed(x,z)) continue;
-    const radius=between(minimumPatchRadius,Math.max(minimumPatchRadius*1.6,bound*.11));
-    if (centers.some(p => Math.hypot(p.x-x,p.z-z)<Math.min(radius,p.radius)*.85)) continue;
-    centers.push({x,z,radius});
+  const habitat=createHabitat({kind:islandKind,scale:terrainScale,radius:bound}),habitatValue={};
+  const centers=habitat.woodlandPatches;
+  const patchArea=centers.reduce((sum,p)=>sum+p.rx*p.rz,0);
+  function chooseWoodland(){
+    let choice=random()*patchArea;
+    for(const p of centers){choice-=p.rx*p.rz;if(choice<=0)return p;}
+    return centers.at(-1);
   }
 
+  const smoothWoodland=value=>Math.min(1,(value-.20)/.60);
   const trees=[], occupied=new Map(), tiles=new Map();
   const spacing=.85, cellKey=(x,z)=>`${x},${z}`;
   function clearNeighbor(x,z,height) {
@@ -92,15 +92,18 @@ export function buildGroves(THREE, materials, terrain, {
   }
   for(let attempt=0;trees.length<requested && attempt<requested*160;attempt++) {
     if(!centers.length)break;
-    const patch=centers[Math.floor(random()*centers.length)];
-    const angle=random()*Math.PI*2,r=Math.sqrt(random())*patch.radius;
-    const x=patch.x+Math.cos(angle)*r,z=patch.z+Math.sin(angle)*r,height=between(minHeight,maxHeight);
+    const patch=chooseWoodland();
+    const angle=random()*Math.PI*2,r=Math.sqrt(random())*1.12;
+    const px=Math.cos(angle)*r*patch.rx,pz=Math.sin(angle)*r*patch.rz,c=Math.cos(patch.angle),s=Math.sin(patch.angle);
+    const x=patch.x+px*c-pz*s,z=patch.z+px*s+pz*c,height=between(minHeight,maxHeight);
+    const ecology=habitat.sample(x,z,habitatValue);
+    // Whole stands share a connected shoulder. Open meadow corridors stay
+    // empty; edge trees feather only the boundary of the same woodland mass.
+    if(ecology.woodland<.24||random()>smoothWoodland(ecology.woodland))continue;
     if(!allowed(x,z,height)||!clearNeighbor(x,z,height))continue;
-    // Wide, smooth gaps make distinct stands, not a uniform carpet of trees.
-    if(Math.sin(x/(bound*.15)+.7)*Math.cos(z/(bound*.13)-.4)<-.73)continue;
     const tx=Math.floor(x/tileSize),tz=Math.floor(z/tileSize);
-    const habitat=Math.sin(x*.07+Math.cos(z*.05))+Math.cos(z*.09-x*.025);
-    const selector=random(),variant=selector<(habitat>.4?.30:.08)?3:Math.floor(random()*3);
+    const stand=centers.indexOf(patch),selector=random();
+    const variant=selector<.12?3:selector<.76?stand%3:Math.floor(random()*3);
     const key=cellKey(tx,tz)+","+variant;
     if(!tiles.has(key)) {
       tiles.set(key,{key,variant,trees:[],low:[],high:[],signature:null,inView:true,sphere:new THREE.Sphere()});
@@ -187,7 +190,7 @@ export function buildGroves(THREE, materials, terrain, {
     overviewTriangles:[...tiles.values()].reduce((s,t)=>s+t.trees.length*variants[t.variant].lowTriangles,0),
     overviewDrawCalls:tiles.size*2,detailTriangleBudget,maxDetailedTrees,
     visibleTrees:trees.length,detailedTrees:0,activeTriangles:0,activeDrawCalls:tiles.size*2,shadowRevision:0,
-    heightRange:[minHeight,maxHeight]};
+    heightRange:[minHeight,maxHeight],habitat:islandKind,woodlandStands:centers.length};
   stats.activeTriangles=stats.overviewTriangles;
   const detailView=createDetailView(THREE),treeSphere=new THREE.Sphere(),
     worldPoint=new THREE.Vector3(),screenPoint=new THREE.Vector3(),worldScale=new THREE.Vector3();

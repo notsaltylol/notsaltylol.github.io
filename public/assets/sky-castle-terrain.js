@@ -1,4 +1,7 @@
 import { createDetailView } from './sky-castle-lod.js';
+import { createHabitat } from './sky-castle-habitat.js';
+import { createGroundSampler } from './sky-castle-ground.js';
+import { buildWaterfallGeometry } from './sky-castle-waterfall.js';
 import { coherentNoise3D, fractalRock, cliffFormation } from './sky-castle-geology.js';
 
 /** Continuous rolling terrain, an excavated lake, and a connected river/fall. */
@@ -198,6 +201,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   }
   const meadow = add(geometry(positions, uvs, indices), materials.grass);
   meadow.name = 'continuous-sculpted-meadow';
+  const surfaceHeight=createGroundSampler(meadow.geometry,{cellSize:Math.max(.25,Math.min(2,scale*.2))});
   let lipLocalZ = 2;
   while (contains(localRiverX(lipLocalZ) * scale, lipLocalZ * scale)) lipLocalZ += .012;
   lipLocalZ -= .012;
@@ -212,7 +216,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const ia=indices[i],ib=indices[i+1],ic=indices[i+2];
     bankA.fromArray(positions,ia*3);bankB.fromArray(positions,ib*3);bankC.fromArray(positions,ic*3);
     const x=(bankA.x+bankB.x+bankC.x)/3,y=(bankA.y+bankB.y+bankC.y)/3,z=(bankA.z+bankB.z+bankC.z)/3;
-    const nearLip=z>lipZ-.30*scale&&Math.abs(x-riverX(z))<.78*scale&&y<waterLevel+.18*scale;
+    const nearLip=z>lipZ-.45*scale&&Math.abs(x-riverX(z))<.85*scale&&y<waterLevel+.70*scale;
     const steep=nearLip&&bankB.sub(bankA).cross(bankC.sub(bankA)).normalize().y<.80;
     (steep?meadowStone:meadowGrass).push(ia,ib,ic);
   }
@@ -323,7 +327,10 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
       turfA.fromArray(cliffP,a*3);turfB.fromArray(cliffP,b*3).sub(turfA);turfC.fromArray(cliffP,c*3).sub(turfA);
       const face=turfB.cross(turfC).normalize();
       // Plants occupy the upward-facing ledges, not the hanging underside.
-      grassy=face.y>.05;
+      const x=(cliffP[a*3]+cliffP[b*3]+cliffP[c*3])/3;
+      const z=(cliffP[a*3+2]+cliffP[b*3+2]+cliffP[c*3+2])/3;
+      const nearOutlet=z>lipZ-.50*scale&&Math.abs(x-riverX(z))<1.0*scale;
+      grassy=face.y>(nearOutlet?.60:.05);
     }
     (grassy?rimTurf:bareRock).push(a,b,c);
   }
@@ -387,36 +394,10 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   river.name = 'connected-river-water';
   river.castShadow = false; river.renderOrder = 2;
   const lip = new THREE.Vector3(riverX(lipZ), waterLevel, lipZ);
-  const fallP = [], fallU = [], fallI = [], fallEdge = [];
-  const fallRows = Math.round(80 * Math.max(1, Math.min(2, verticalScale)));
   const lipWidth=2*(.41+.045*Math.sin(lipLocalZ*2))*scale;
-  const streams=[[0,.29,-.25],[.29,.72,.20],[.72,1,-.05]];
-  // The three streams share an exact continuous river lip. Below the lip they
-  // curl into unequal lobes, narrow, separate and disperse at different depths.
-  // Only mesh shape changes: shader time still supplies the exact looped flow.
-  streams.forEach(([start,end,lengthOffset],stream)=>{
-    const columns=Math.max(4,Math.round((end-start)*48*Math.max(1,Math.min(2,scale))));
-    const first=fallP.length/3,center=(start+end)/2;
-    for(let j=0;j<=fallRows;j++)for(let i=0;i<=columns;i++){
-      const t=j/fallRows,v=i/columns,u=start+(end-start)*v;
-      const split=smooth(.08,.26,t),narrow=.40*smooth(.08,.56,t)-.16*smooth(.64,1,t);
-      const edgeRetreat=(u-center)*narrow;
-      const drift=(.080*Math.sin(t*Math.PI)+.032*Math.sin(t*6.3+stream*.8)*split)*scale;
-      const x=lip.x+((u-.5)-edgeRetreat+(center-.5)*.15*split)*lipWidth+drift;
-      const length=7.0+lengthOffset+.35*Math.sin(v*Math.PI)+.10*Math.sin(v*8+stream);
-      const y=waterLevel-t*7.4*verticalScale+(7.4-length)*verticalScale*t**5*split;
-      const lipRoll=.080*Math.sin(u*9)*smooth(0,.035,t)*(1-smooth(.035,.15,t));
-      const z=lip.z+scale*(.19*smooth(0,.14,t)+.20*t*t+lipRoll+.025*Math.sin(u*9+t*6)*Math.sin(t*Math.PI));
-      fallP.push(x,y,z);fallU.push(u,1-t);
-      const wholeEdge=Math.min(1,Math.min(u,1-u)*8),streamEdge=Math.min(1,Math.min(v,1-v)*6);
-      fallEdge.push(wholeEdge*(1-split)+streamEdge*split);
-      if(j<fallRows&&i<columns){const a=first+j*(columns+1)+i,b=a+columns+1;fallI.push(a,a+1,b,a+1,b+1,b);}
-    }
-  });
-  const fallGeometry=geometry(fallP,fallU,fallI);
-  fallGeometry.setAttribute('waterEdge',new THREE.Float32BufferAttribute(fallEdge,1));
+  const fallGeometry=buildWaterfallGeometry(THREE,{lip,width:lipWidth,scale,verticalScale});
   const waterfall = add(fallGeometry, materials.waterfall);
-  waterfall.name='split-lobed-waterfall';
+  waterfall.name='rolling-turbulent-waterfall';
   waterfall.castShadow = false; waterfall.renderOrder = 3;
 
   const stoneChunks = [], flowerChunks = [];
@@ -463,22 +444,16 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const rockGeo = new THREE.IcosahedronGeometry(1, 2);
   const stoneCount = Math.max(1, Math.round(46 * areaScale)), flowerCount = Math.max(1, Math.round(380 * areaScale));
   const dummy = new THREE.Object3D();
+  const landscapeHabitat=createHabitat({kind:'main',scale}),habitatValues={};
+  function habitat(x,z,flowers){
+    landscapeHabitat.sample(x,z,habitatValues);
+    return flowers?habitatValues.flowers:habitatValues.stone;
+  }
   function legalScatter(x, z, flowers) {
     return contains(x, z, flowers ? .45 : .25) && !isReserved(x,z,flowers?.16:.4) &&
       height(x,z) >= waterLevel + (flowers ? .12 : .05) &&
       Math.hypot(x-castleAnchor.x,z-castleAnchor.z) >= (flowers ? 1.5 : 1.3) &&
-      trailDistance(x,z) >= (flowers ? .26 : .50);
-  }
-  function habitat(x, z, flowers) {
-    const local = toLocal(x,z);
-    const field = coherentNoise3D(local.x * .70 + (flowers ? 8.1 : -3.7), 2.4, local.z * .70);
-    if (flowers) {
-      const shore = Math.exp(-(((lakeDistance(x,z)-1.36)/.28) ** 2));
-      const lowMeadow = 1-smooth(1.45,2.5,height(x,z)/verticalScale);
-      return .07 + .72 * smooth(-.23,.35,field) * lowMeadow + .20 * shore;
-    }
-    const rim = smooth(.66,.94,Math.hypot(x,z/.76)/radius(Math.atan2(z/.76,x)));
-    return .06 + .66 * smooth(-.20,.35,field) + .25 * rim;
+      trailDistance(x,z) >= (flowers ? .26 : .50) && habitat(x,z,flowers)>.015;
   }
   function makePatches(count, flowers) {
     const patches = [];
@@ -522,7 +497,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     return [patch.x,patch.z];
   }
   const stonePatches=makePatches(Math.max(4,Math.ceil(stoneCount/15)),false);
-  const stones = new THREE.InstancedMesh(rockGeo, materials.stone, stoneCount);
+  const stones = new THREE.InstancedMesh(rockGeo, materials.rock, stoneCount);
   for(let i=0;i<stoneCount;i++) {
     const [x,z]=samplePatch(stonePatches[i%stonePatches.length],false);
     const s=.07+random()*.16;
@@ -540,17 +515,27 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   scatterChunks(flowers, flowerChunks, 'terrain-meadow-flowers');
 
   // A winding limestone route climbs the hill; each section follows terrain.
-  const pathP = [], pathU = [], pathI = [];
+  const pathP = [], pathU = [], pathI = [],pathColumns=4;
   for (let i = 0; i <= trailSteps; i++) {
     const t = i / trailSteps, p = trail.getPoint(t), tangent = trail.getTangent(t), width = .17;
-    for (const side of [-1, 1]) { const x = p.x + tangent.z * width * side, z = p.z - tangent.x * width * side; pathP.push(x, height(x,z) + .023, z); pathU.push((side+1)/2,t); }
-    if (i < trailSteps) { const a = i * 2; pathI.push(a,a+2,a+1,a+1,a+2,a+3); }
+    for(let col=0;col<=pathColumns;col++){const side=col/pathColumns*2-1,x=p.x+tangent.z*width*side,z=p.z-tangent.x*width*side;pathP.push(x,surfaceHeight(x,z)+.018,z);pathU.push(col/pathColumns,t);}
+    if(i<trailSteps)for(let col=0;col<pathColumns;col++){const a=i*(pathColumns+1)+col,b=a+pathColumns+1;pathI.push(a,b,a+1,a+1,b,b+1);}
   }
-  const trailMesh = add(geometry(pathP,pathU,pathI), materials.stone); trailMesh.material.side = THREE.DoubleSide; trailMesh.castShadow = false;
-  trailMesh.name = 'limestone-walking-route';
+  // Worn limestone carries the route without competing with the pale keep.
+  // Share the live palette color; tint only this material's diffuse response.
+  const trailMaterial=materials.stone.clone();trailMaterial.color=materials.stone.color;
+  trailMaterial.side=THREE.DoubleSide;trailMaterial.name='worn-limestone-path';
+  trailMaterial.onBeforeCompile=shader=>{
+    materials.stone.onBeforeCompile(shader);
+    shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>',
+      '#include <color_fragment>\n diffuseColor.rgb *= vec3(0.58,0.61,0.56);');
+  };
+  trailMaterial.customProgramCacheKey=()=>materials.stone.customProgramCacheKey()+'-worn-path';
+  const trailMesh = add(geometry(pathP,pathU,pathI),trailMaterial);trailMesh.castShadow=false;
+  trailMesh.name = 'limestone-walking-route';trailMesh.geometry.userData.pathColumns=pathColumns;
   const detailStats = { stoneCount, flowerCount, stoneChunks:stoneChunks.length, flowerChunks:flowerChunks.length,
     meadowTriangles:indices.length / 3, lipBankTriangles:meadowStone.length/3, refinedBankCells, cliffTriangles:cliffI.length / 3, lakeTriangles:waterI.length / 3, riverTriangles:riverI.length / 3,
     stonePatches:stonePatches.length, flowerPatches:flowerPatches.length, scatterAttempts, trailWidth:.34 };
-  return { group, scale, verticalScale, height, contains, radius, lakeDistance, riverX, waterLevel, lip, castleAnchor,
+  return { group, scale, verticalScale, height, surfaceHeight, contains, radius, lakeDistance, riverX, waterLevel, lip, castleAnchor,
     toLocal, toWorld, trail, trailDistance, isReserved, updateDetail, detailStats };
 }

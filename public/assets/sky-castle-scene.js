@@ -17,7 +17,7 @@ const W = 960, H = 600, DURATION = 60;
 const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE;
 const groveControllers=[];
 const travelerControllers=[];
-const sunOffset=new THREE.Vector3(14*LAND_SCALE,17*LAND_SCALE,19*LAND_SCALE);
+const sunOffset=new THREE.Vector3(28*LAND_SCALE,25*LAND_SCALE,8*LAND_SCALE);
 const params = new URLSearchParams(location.search), capture = params.has('capture');
 const sceneContainer=document.getElementById('scene');
 let renderScale=capture?1:Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
@@ -39,7 +39,7 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xb4dce4, 40*LAND_SCALE, 90*LAND_SCALE);
 const camera = new THREE.PerspectiveCamera(30,W/H,1,180*LAND_SCALE);
 const palette = createMaterials(THREE), m = palette.materials;
-palette.setWorldScale(LAND_SCALE,HEIGHT_SCALE);
+palette.setWorldScale(LAND_SCALE,HEIGHT_SCALE);palette.setSunDirection(sunOffset);
 const meadowReady=palette.loadMeadowTexture(new URL('./meadow-paint-v1.png',import.meta.url).href);
 const rockReady=palette.loadRockTexture(new URL('./rock-paint-v1.png',import.meta.url).href);
 const ambient = new THREE.HemisphereLight(0xfff3d7,0x739aaa,1.45);
@@ -111,7 +111,7 @@ const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-10
  trailDistance:(x,z)=>foreground.trailDistance(x+ledge.position.x,z+ledge.position.z),
  radius:lookoutLand.radius,
  contains:(x,z,margin=0)=>foreground.contains(x+ledge.position.x,z+ledge.position.z,margin)};
-const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'satellite',reservedPositions:[[11,-.5,3],[12.7,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
+const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'lookout',reservedPositions:[[11,-.5,3],[12.7,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
 
 // A quiet name is assembled from actual slender stone strokes and raycast
 // onto the cliff. There is no rectangular sign or image masquerading as text.
@@ -188,7 +188,7 @@ window.setStyle=(id,{persist=true}={})=>{
  const preset=palette.setStyle(id);foregroundGrass.color.copy(m.grass.color).multiplyScalar(.78);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
  // Separate the far landforms with aerial perspective. Nearby architecture
  // keeps its full pigment contrast when the camera dollies into a close view.
- const fogRange={original:[24,85],fantasy:[24,75],ink:[27,95],cozy:[24,90],ghibli:[22,80]}[id];
+ const fogRange={original:[34,95],fantasy:[36,95],ink:[36,110],cozy:[30,95],ghibli:[34,95]}[id];
  scene.fog.near=fogRange[0]*LAND_SCALE;scene.fog.far=fogRange[1]*LAND_SCALE;
  document.body.style.backgroundColor=new THREE.Color(preset.fog).lerp(new THREE.Color(0xfffbf1),.66).getStyle();
  atmosphere.setStyle(preset,id);
@@ -217,7 +217,7 @@ window.renderFrame=phase=>{
  const cycle=phase-Math.floor(phase),t=cycle*Math.PI*2;
  // Flow stays lively during the slow camera orbit; eight water cycles still
  // meet the camera at exactly the same seamless loop boundary.
- palette.animate(cycle*8);atmosphere.animate(cycle);
+ palette.animate(cycle*8);palette.animateLight(cycle);atmosphere.animate(cycle);
  window.castleState.phase=cycle;
  const angle=t+azimuthOffset;camera.position.set(Math.sin(angle)*32*LAND_SCALE/zoom,(Math.sin(elevation)*32*LAND_SCALE+1)/zoom,Math.cos(angle)*32*LAND_SCALE/zoom).add(focus);camera.updateProjectionMatrix();camera.lookAt(focus);camera.updateMatrixWorld(true);
  const visibleWidth=2*camera.position.distanceTo(focus)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.aspect;

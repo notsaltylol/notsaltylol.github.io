@@ -1,5 +1,5 @@
 import { createDetailView } from './sky-castle-lod.js';
-import { coherentNoise3D } from './sky-castle-geology.js';
+import { createHabitat } from './sky-castle-habitat.js';
 
 /** Grounded details for the foreground lookout, shared by every art direction. */
 export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale=1}={}) {
@@ -130,53 +130,70 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
   }
   instances(new THREE.IcosahedronGeometry(1,1),materials.rock,stones);
 
-  const shrubs=[],rocks=[],petals=[],hearts=[],stems=[],leaves=[],patches=[];
-  const targetPatches=Math.round(6*landScale*landScale),patchCells=new Map(),patchCellSize=1.25;
-  function clearPatch(x,z){
-    const ix=Math.floor(x/patchCellSize),iz=Math.floor(z/patchCellSize);
-    for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)for(const p of patchCells.get(`${ix+dx},${iz+dz}`)||[])
-      if(Math.hypot(x-p[0],z-p[1])<patchCellSize)return false;
-    return true;
-  }
-  for(let attempt=0;patches.length<targetPatches&&attempt<targetPatches*100;attempt++){
-    const x=groundBounds.min.x+random()*(groundBounds.max.x-groundBounds.min.x);
-    const z=groundBounds.min.z+random()*(groundBounds.max.z-groundBounds.min.z);
-    if(!contains(x,z,1.0)||trailDistance(x,z)<.9||!clearPatch(x,z))continue;
-    const habitat=coherentNoise3D(x*.046+13.8,.4,z*.058-7.2)*.75
-      +coherentNoise3D(x*.17,.9,z*.13)*.25;
-    // Broad connected belts feather into open grass rather than forming six
-    // dense circular beds. A small spacing constraint prevents overlapping domes.
-    if(random()>.28+Math.max(0,habitat+.14)*1.9)continue;
-    const dx=groundHeight(x+.2,z)-groundHeight(x-.2,z),dz=groundHeight(x,z+.2)-groundHeight(x,z-.2);
-    if(Math.hypot(dx,dz)>.55)continue;
-    const patch=[x,z,.42+random()*.35];patches.push(patch);
-    const key=`${Math.floor(x/patchCellSize)},${Math.floor(z/patchCellSize)}`;
-    if(!patchCells.has(key))patchCells.set(key,[]);patchCells.get(key).push(patch);
-  }
-  for (const [cx, cz, radius] of patches) {
-    for (let i = 0; i < 5; i++) {
-      const angle = random() * Math.PI * 2, r = Math.sqrt(random()) * radius;
-      const x = cx + Math.cos(angle) * r, z = cz + Math.sin(angle) * r, y = groundHeight(x, z);
-      if(!contains(x,z,.35)||trailDistance(x,z)<.65)continue;
-      const s = .13 + random() * .19;
-      shrubs.push({x, y:y+s*.42, z, scale:[s*1.3,s*.7,s], rotation:[0,random()*6,0]});
-      if(i<2&&contains(x+.18,z+.15,s*.8))rocks.push({x:x+.18,y:groundHeight(x+.18,z+.15)+s*.16,z:z+.15,scale:[s*.55,s*.35,s*.8],rotation:[0,random()*6,0]});
+  const shrubs=[],rocks=[],petals=[],hearts=[],stems=[],leaves=[];
+  const habitat=createHabitat({kind:'lookout',scale:landScale,originX:ledge.position.x,originZ:ledge.position.z});
+  const habitatValue={},areaScale=landScale*landScale;
+  function placementPatches(count,species,spacing,radius){
+    const result=[],cells=new Map();
+    function clear(x,z){
+      const ix=Math.floor(x/spacing),iz=Math.floor(z/spacing);
+      for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++)for(const p of cells.get(`${ix+dx},${iz+dz}`)||[])
+        if(Math.hypot(x-p[0],z-p[1])<spacing)return false;
+      return true;
     }
-    for (let i = 0; i < 15; i++) {
-      const angle = random() * Math.PI * 2, r = Math.sqrt(random()) * radius * 1.5;
-      const x = cx + Math.cos(angle) * r, z = cz + Math.sin(angle) * r;
-      if(!contains(x,z,.08)||trailDistance(x,z)<.28)continue;
-      const y = groundHeight(x,z), h = .10 + random() * .16, size = .024 + random() * .014;
-      stems.push({x,y:y+h/2,z,scale:[.006,h,.006]});
-      hearts.push({x,y:y+h,z,scale:[size*.6,size*.5,size*.6]});
-      for(let j=0;j<5;j++){
-        const a=j/5*Math.PI*2;
-        petals.push({x:x+Math.cos(a)*size*.8,y:y+h,z:z+Math.sin(a)*size*.8,
-          scale:[size,size*.35,size*.55],rotation:[0,-a,0]});
-      }
-      for(let j=0;j<2;j++) leaves.push({x:x+(j?1:-1)*.027,y:y+h*.45,z,
-        scale:[.042,.008,.018],rotation:[0,angle,j?.45:-.45]});
+    for(let attempt=0;result.length<count&&attempt<count*220;attempt++){
+      const x=groundBounds.min.x+random()*(groundBounds.max.x-groundBounds.min.x);
+      const z=groundBounds.min.z+random()*(groundBounds.max.z-groundBounds.min.z);
+      const density=habitat.sample(x,z,habitatValue)[species];
+      if(habitatValue.clearing>.48||density<.18||random()>Math.min(1,density*density*2)||!contains(x,z,1.05)
+        ||trailDistance(x,z)<1.15||!clear(x,z))continue;
+      const dx=groundHeight(x+.2,z)-groundHeight(x-.2,z),dz=groundHeight(x,z+.2)-groundHeight(x,z-.2);
+      if(Math.hypot(dx,dz)>.55)continue;
+      const patch=[x,z,radius*(.78+random()*.45),random()*Math.PI*2];result.push(patch);
+      const key=`${Math.floor(x/spacing)},${Math.floor(z/spacing)}`;
+      if(!cells.has(key))cells.set(key,[]);cells.get(key).push(patch);
     }
+    return result;
+  }
+  const patches=placementPatches(Math.round(6*areaScale),'shrub',1.25,.65);
+  const flowerPatches=placementPatches(Math.max(5,Math.round(.8*areaScale)),'flowers',2.0,1.45);
+  const rockPatches=placementPatches(Math.max(4,Math.round(.8*areaScale)),'stone',1.6,.65);
+  function samplePatch(patch,species,clearance,aspect=1){
+    for(let attempt=0;attempt<40;attempt++){
+      const angle=random()*Math.PI*2,r=Math.sqrt(random())*patch[2];
+      const px=Math.cos(angle)*r,pz=Math.sin(angle)*r*aspect,c=Math.cos(patch[3]),s=Math.sin(patch[3]);
+      const x=patch[0]+px*c-pz*s,z=patch[1]+px*s+pz*c;
+      const density=habitat.sample(x,z,habitatValue)[species];
+      if(density<.08||habitatValue.clearing>.65||!contains(x,z,clearance)||trailDistance(x,z)<clearance+.40)continue;
+      return {x,z};
+    }
+    // Each patch center has already passed wider clearance checks.
+    return {x:patch[0],z:patch[1]};
+  }
+  // Understory and fern masses continue the tree stands. Flowers have their
+  // own sunny edge drifts; stones gather along sheltered shoulder outcrops.
+  // Keeping explicit populations prevents rejection at a trail or rim from
+  // silently deleting fine detail when the habitat composition changes.
+  for(let i=0;i<Math.round(30*areaScale)&&patches.length;i++){
+    const {x,z}=samplePatch(patches[i%patches.length],'shrub',.35),y=groundHeight(x,z),s=.13+random()*.19;
+    shrubs.push({x,y:y+s*.42,z,scale:[s*1.3,s*.7,s],rotation:[0,random()*6,0]});
+  }
+  for(let i=0;i<Math.round(12*areaScale)&&rockPatches.length;i++){
+    const {x,z}=samplePatch(rockPatches[i%rockPatches.length],'stone',.30,.55),s=.13+random()*.19;
+    rocks.push({x,y:groundHeight(x,z)+s*.16,z,scale:[s*.55,s*.35,s*.8],rotation:[0,random()*6,0]});
+  }
+  for(let i=0;i<Math.round(90*areaScale)&&flowerPatches.length;i++){
+    const {x,z}=samplePatch(flowerPatches[i%flowerPatches.length],'flowers',.08);
+    const y=groundHeight(x,z),h=.10+random()*.16,size=.024+random()*.014,angle=random()*Math.PI*2;
+    stems.push({x,y:y+h/2,z,scale:[.006,h,.006]});
+    hearts.push({x,y:y+h,z,scale:[size*.6,size*.5,size*.6]});
+    for(let j=0;j<5;j++){
+      const a=j/5*Math.PI*2;
+      petals.push({x:x+Math.cos(a)*size*.8,y:y+h,z:z+Math.sin(a)*size*.8,
+        scale:[size,size*.35,size*.55],rotation:[0,-a,0]});
+    }
+    for(let j=0;j<2;j++)leaves.push({x:x+(j?1:-1)*.027,y:y+h*.45,z,
+      scale:[.042,.008,.018],rotation:[0,angle,j?.45:-.45]});
   }
   // Distant shrubs have an uneven low crown. Nearby foliage replaces that
   // volume with folded leaves and branches instead of decorating a smooth ball.
@@ -271,7 +288,8 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
     chunk.bounds.union(record.mesh.boundingBox);chunk.records.push(record);
   }
   let detailShadowRevision=0;
-  const stats={patches:patches.length,shrubs:shrubs.length,flowers:hearts.length,fineLeaves:fineLeaves.length,shadowRevision:0};
+  const stats={patches:patches.length,shrubs:shrubs.length,flowers:hearts.length,fineLeaves:fineLeaves.length,
+    flowerDrifts:flowerPatches.length,rockOutcrops:rockPatches.length,rocks:rocks.length,shadowRevision:0};
   function updateDetail(camera,visibleWidth){
     group.updateWorldMatrix(true,true);detailView.prepare(camera,visibleWidth);
     for(const chunk of lodChunks.values()){

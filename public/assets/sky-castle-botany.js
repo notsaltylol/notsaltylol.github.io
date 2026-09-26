@@ -1,4 +1,5 @@
 import { createDetailView } from './sky-castle-lod.js';
+import { createHabitat } from './sky-castle-habitat.js';
 /**
  * Fine botanical geometry for the floating island.
  *
@@ -10,6 +11,7 @@ import { createDetailView } from './sky-castle-lod.js';
 export function buildBotany(THREE, materials, terrain) {
   const worldScale = terrain.scale || 1, areaScale = worldScale * worldScale;
   const world = (x, z) => terrain.toWorld ? terrain.toWorld(x, z) : { x:x * worldScale, z:z * worldScale };
+  const habitat=createHabitat({kind:'main',scale:worldScale}),habitatValue={};
   const group = new THREE.Group();
   group.name = 'fine-island-botany';
   const leafMaterial = materials.leafDetail || materials.leaf;
@@ -183,12 +185,13 @@ export function buildBotany(THREE, materials, terrain) {
 
   // Population follows land area; every tuft retains its original physical
   // size. More small habitats are added instead of stretching a dozen old ones.
-  function habitats(base, count, radius, clearance = .2) {
-    const result = base.map(([x, z, r]) => { const p = world(x, z); return [p.x, p.z, r || radius]; });
-    for (let attempt = 0; result.length < count && attempt < count * 50; attempt++) {
+  function habitats(base, count, radius, clearance = .2, species='grass') {
+    const result = base.map(([x, z, r]) => { const p = world(x, z); return [p.x, p.z, r || radius]; })
+      .filter(([x,z])=>allowed(x,z,clearance)&&habitat.sample(x,z,habitatValue)[species]>.20&&habitatValue.clearing<.65);
+    for (let attempt = 0; result.length < count && attempt < count * 100; attempt++) {
       const x = range(-6.7, 6.7) * worldScale, z = range(-5.05, 5.05) * worldScale;
-      const localX = x / worldScale, localZ = z / worldScale;
-      if (!allowed(x, z, clearance) || Math.sin(localX * 1.7 + .5) * Math.cos(localZ * 1.4) < -.54) continue;
+      const density=habitat.sample(x,z,habitatValue)[species];
+      if(habitatValue.clearing>.65||density<.14||random()>Math.min(1,density*density*1.8)||!allowed(x,z,clearance))continue;
       result.push([x, z, radius * range(.78, 1.22)]);
     }
     return result;
@@ -198,7 +201,7 @@ export function buildBotany(THREE, materials, terrain) {
     [-2.05, 3.45, .62], [.15, 3.76, .57], [4.6, 3.0, .60],
     [5.3, .76, .73], [5.13, -1.18, .68], [3.0, -3.75, .74],
     [.65, -3.45, .78], [-1.25, -3.7, .62], [-5.4, -.40, .57],
-  ], Math.round(12 * areaScale), .66);
+  ], Math.round(6 * areaScale), .95);
   // Spatial hashing keeps rejection sampling linear at tens of thousands of roots.
   function spacedPopulation(minDistance) {
     const cells = new Map(), cellSize = minDistance;
@@ -214,13 +217,14 @@ export function buildBotany(THREE, materials, terrain) {
     };
   }
   const grassSpacing = spacedPopulation(.115);
-  function scatter(count, patches, clearance, spacing, sizeRange, offsetY = 0) {
+  function scatter(count, patches, clearance, spacing, sizeRange, offsetY = 0, species='grass') {
     const roots = [], target = Math.round(count * areaScale);
     for (let attempt = 0; roots.length < target && attempt < target * 55; attempt++) {
       const patch = patches[Math.floor(random() * patches.length)];
       const angle = random() * Math.PI * 2, radius = Math.sqrt(random()) * patch[2];
       const x = patch[0] + Math.cos(angle) * radius, z = patch[1] + Math.sin(angle) * radius;
-      if (!allowed(x, z, clearance) || !spacing(x, z)) continue;
+      const density=habitat.sample(x,z,habitatValue)[species];
+      if(habitatValue.clearing>.72||density<.11||!allowed(x,z,clearance)||!spacing(x,z))continue;
       roots.push({ x, z, y:terrain.height(x, z) + offsetY, size:range(...sizeRange),
         yaw:range(0, Math.PI * 2), phase:range(0, Math.PI * 2) });
     }
@@ -228,10 +232,10 @@ export function buildBotany(THREE, materials, terrain) {
   }
   const tallRoots = scatter(170, patchCenters, .15, grassSpacing, [.72, 1.18]);
   const fineRoots = scatter(60, patchCenters, .15, grassSpacing, [.75, 1.25]);
-  const fernPatches = habitats([[-4.75, 1.6], [4.7, -1.55], [-.9, -3.85], [3.9, 2.1]], Math.round(4 * areaScale), .52, .45);
-  const fernRoots = scatter(12, fernPatches, .27, spacedPopulation(.41), [.80, 1.12], .007);
-  const cloverPatches = habitats([[-4.75, .85], [-1.15, 3.15], [4.85, .35], [.20, -3.15]], Math.round(4 * areaScale), .48);
-  const cloverRoots = scatter(60, cloverPatches, .12, spacedPopulation(.115), [.80, 1.25], .003);
+  const fernPatches = habitats([[-4.75, 1.6], [4.7, -1.55], [-.9, -3.85], [3.9, 2.1]], Math.round(1.2 * areaScale), .95, .45, 'fern');
+  const fernRoots = scatter(12, fernPatches, .27, spacedPopulation(.41), [.80, 1.12], .007, 'fern');
+  const cloverPatches = habitats([[-4.75, .85], [-1.15, 3.15], [4.85, .35], [.20, -3.15]], Math.round(2.4 * areaScale), .65, .2, 'clover');
+  const cloverRoots = scatter(60, cloverPatches, .12, spacedPopulation(.115), [.80, 1.25], .003, 'clover');
   const reedRoots = [];
   const reedGroups = Math.max(4, Math.round(4 * worldScale));
   for (let cluster = 0; cluster < reedGroups; cluster++) {
@@ -320,7 +324,7 @@ export function buildBotany(THREE, materials, terrain) {
     overviewTriangles, chunks:chunks.size, grassClumps:tallRoots.length + fineRoots.length,
     grassBlades:tallRoots.length * 5 + fineRoots.length * 4, ferns:fernRoots.length,
     cloverPlants:cloverRoots.length, reeds:reedRoots.length, detailMode:'overview',
-    trailProtected:true, bridgeProtected:true };
+    trailProtected:true, bridgeProtected:true,grassHabitats:patchCenters.length,fernHabitats:fernPatches.length,cloverHabitats:cloverPatches.length };
   const detailView=createDetailView(THREE);
   const defaultWidth=worldScale>1?280:28;
   function updateDetail(camera, visibleWidth=defaultWidth) {

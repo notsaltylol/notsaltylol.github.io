@@ -77,6 +77,10 @@ const PIGMENT_GLSL = /* glsl */`
   uniform float uPaintPigment;
   uniform float uPaintGrain;
   uniform float uPaintSurface;
+  uniform float uLandscapeScale;
+  uniform float uCloudStrength;
+  uniform vec2 uCloudSlope;
+  uniform vec2 uCloudDrift;
   uniform vec3 uPaintShadow;
   uniform vec3 uPaintMoss;
   uniform sampler2D uMeadowTexture;
@@ -100,6 +104,26 @@ const PIGMENT_GLSL = /* glsl */`
                    mix(paintHash(i + vec3(0,1,0)), paintHash(i + vec3(1,1,0)), f.x), f.y),
                mix(mix(paintHash(i + vec3(0,0,1)), paintHash(i + vec3(1,0,1)), f.x),
                    mix(paintHash(i + vec3(0,1,1)), paintHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+  }
+  // Three broad cloud banks project along the actual sun direction. Every
+  // mesh samples the same world field, so shadows join across roots, foliage,
+  // masonry and terrain instead of sliding with the camera or detail level.
+  float landscapeCloud(vec3 position) {
+    vec2 p = (position.xz - position.y * uCloudSlope) / uLandscapeScale + uCloudDrift;
+    vec2 warp = vec2(paintNoise(vec3(p * 0.55, 2.4)), paintNoise(vec3(p * 0.55, 8.7))) - 0.5;
+    vec2 q = p + warp * 0.64;
+    const mat2 turn = mat2(0.94, 0.34, -0.34, 0.94);
+    vec2 a = turn * (q - vec2(1.4, -1.9)) / vec2(2.6, 1.8);
+    vec2 b = turn * (q - vec2(-0.8, 2.6)) / vec2(3.7, 1.4);
+    vec2 c = turn * (q - vec2(-7.0, 12.0)) / vec2(6.5, 2.7);
+    float cover = max(exp(-dot(a,a)), max(exp(-dot(b,b)), exp(-dot(c,c))));
+    cover = smoothstep(0.23, 0.78, cover);
+    // A break in the clouds leaves the summit/approach and travelers in light.
+    vec2 summit = vec2(-3.1, -1.7) - 2.78 * uCloudSlope;
+    vec2 lookout = vec2(-6.9, 10.45) + 3.3 * uCloudSlope;
+    float summitOpening = 1.0 - smoothstep(0.55, 1.35, length((p-summit)/vec2(2.6,2.2)));
+    float lookoutOpening = 1.0 - smoothstep(0.30, 1.15, length((p-lookout)/vec2(1.4,0.8)));
+    return cover * (1.0 - max(summitOpening, lookoutOpening) * 0.96);
   }
   float paintBand(float lightValue) {
     if (uPaintBands < 1.0) return lightValue;
@@ -222,6 +246,8 @@ export function createMaterials(THREE) {
     uPaintSoftness:{ value:0.2 }, uPaintPigment:{ value:0.95 },
     uPaintGrain:{ value:0.08 }, uPaintShadow:{ value:new THREE.Color(PALETTES.fantasy.shadow) },
     uPaintMoss:{ value:new THREE.Color(PALETTES.fantasy.grass) },
+    uLandscapeScale:{value:1},uCloudStrength:{value:0},
+    uCloudSlope:{value:new THREE.Vector2(28/25,8/25)},uCloudDrift:{value:new THREE.Vector2()},
     uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
     uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 },
     uRockTexture:{ value:whiteFallback() }, uRockEnabled:{ value:0 },
@@ -408,7 +434,14 @@ export function createMaterials(THREE) {
           #else
             paintedLight = clamp(dot(totalDiffuse, vec3(0.2126, 0.7152, 0.0722)) / pigmentLuma, 0.0, 1.0);
           #endif
-          paintedLight = paintBand(paintedLight);
+          float cloudLight = 1.0 - landscapeCloud(vPaintWorldPosition) * uCloudStrength;
+          // Keep broad cloud penumbrae soft in the clear-line treatment. If
+          // quantized with direct light, a gentle wash becomes a hard blob.
+          if (uPaintBands > 1.0 && uPaintSoftness < 0.04) {
+            paintedLight = paintBand(paintedLight) * cloudLight;
+          } else {
+            paintedLight = paintBand(paintedLight * cloudLight);
+          }
           float shade = mix(0.99, mix(0.34, 1.13, paintedLight), uPaintContrast);
           vec3 warmPigment = diffuseColor.rgb * mix(vec3(1.0), vec3(1.05, 1.01, 0.92), paintedLight * uPaintContrast);
           vec3 outgoingLight = warmPigment * shade;
@@ -432,7 +465,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v11-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v12-${surface}`;
     materials[key] = material;
   }
 
@@ -451,9 +484,11 @@ export function createMaterials(THREE) {
     varying vec3 vWaterNormal;
     varying float vWaterFlow;
     varying float vWaterEdge;
+    varying vec2 vWaterParticle;
     attribute float waterDepth;
     attribute float waterFlow;
     attribute float waterEdge;
+    attribute vec3 waterParticle;
     uniform float uPhase;
     uniform float uFall;
     #include <fog_pars_vertex>
@@ -463,11 +498,26 @@ export function createMaterials(THREE) {
       vWaterDepth = waterDepth;
       vWaterFlow = waterFlow;
       vWaterEdge = waterEdge;
-      vWaterNormal = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));
+      vWaterNormal = normalize(normalMatrix * (uFall > 0.5 ? normal : vec3(0.0, 1.0, 0.0)));
+      vWaterParticle = vec2(0.0);
       vec3 p = position;
       // Lake and river share a level plane at their overlap. Displacing their
       // different tessellations creates visible depth fighting at the mouth;
       // filtered light and flow fields provide the small surface motion.
+      if (uFall > 0.5) {
+        float t = uPhase * 6.28318530718;
+        if (waterParticle.z > 0.5) {
+          float life = fract(uPhase * 2.0 + waterParticle.x);
+          p.y -= life * waterParticle.y;
+          p.x += sin(life * 3.14159265359) * 0.17 * sin(waterParticle.x * 31.0);
+          p.z += life * 0.62;
+          vWaterParticle = vec2(1.0, life);
+        } else {
+          float develop = smoothstep(0.006, 0.10, 1.0 - uv.y);
+          p.x += sin(position.y * 0.34 + position.x * 0.73 - t * 2.0) * 0.055 * develop;
+          p.z += cos(position.y * 0.42 - position.x * 0.61 - t * 3.0) * 0.040 * develop;
+        }
+      }
       vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
       vWaterView = -mvPosition.xyz;
       gl_Position = projectionMatrix * mvPosition;
@@ -482,6 +532,7 @@ export function createMaterials(THREE) {
     varying vec3 vWaterNormal;
     varying float vWaterFlow;
     varying float vWaterEdge;
+    varying vec2 vWaterParticle;
     uniform float uPhase;
     uniform vec3 uWater;
     uniform vec3 uFoam;
@@ -517,6 +568,13 @@ export function createMaterials(THREE) {
       float b = waterNoise(p + vec2(0.0, second * travel));
       return mix(a, b, blend);
     }
+    float fallingField(vec2 p, float cycles, float travel) {
+      // Two related physical scales soften the square corners of value noise.
+      // Both advect at the same velocity; the smaller field breaks broad foam
+      // into folded wash instead of an independent layer of sparkling grain.
+      return flowingField(p, cycles, travel) * 0.72
+        + flowingField(p * vec2(1.77, 1.36) + vec2(11.8, 7.9), cycles, travel * 1.36) * 0.28;
+    }
     vec3 reflectedSky(vec2 current, vec2 bend, vec2 drift) {
       vec3 worldView = normalize((vec4(normalize(vWaterView), 0.0) * viewMatrix).xyz);
       vec2 slope = vec2(waterField(current * 0.82 + drift * 0.12),
@@ -545,37 +603,40 @@ export function createMaterials(THREE) {
       vec3 color;
       float alpha;
       if (uFall > 0.5) {
-        // Broad uneven lanes establish the visible falling sheet at a distance.
-        // The narrower moving ribbons appear only while their pixels resolve.
-        vec2 fallP = vec2(uv.x * 0.89 * uWorldScale.x, uv.y * 7.4 * uWorldScale.y);
-        float longLanes = waterField(vec2(fallP.x * 0.60, fallP.y * 0.025) + vec2(2.4, 5.7));
-        float falling = flowingField(vec2(fallP.x * 1.8, fallP.y * 0.16), 2.0, 4.2);
-        float broadRibbon = smoothstep(0.32, 0.76, longLanes * 0.56 + falling * 0.44);
-        vec2 fineP = vec2(fallP.x * 4.8, fallP.y * 0.54);
-        float fineWidth = max(length(dFdx(fineP)), length(dFdy(fineP)));
-        float fineResolve = 1.0 - smoothstep(0.65, 1.55, fineWidth);
-        float fineFlow = flowingField(fineP + vec2(longLanes, 0.0), 3.0, 7.3);
-        float threadFoam = smoothstep(0.51, 0.73, fineFlow) * fineResolve;
-        float crest = pow(uv.y, 24.0) * (0.36 + broadRibbon * 0.16);
-        float aeration = smoothstep(0.22, 0.85, 1.0 - uv.y);
-        float foam = broadRibbon * 0.29 + threadFoam * 0.14 + crest + aeration * 0.16;
-        color = mix(uWater * vec3(0.66, 0.95, 1.10), uFoam, clamp(0.27 + foam, 0.0, 0.91));
-        float breakup = 1.0 - smoothstep(0.68, 0.97, uv.y);
-        float leftDrift = flowingField(vec2(fallP.y * 0.075, 3.2), 1.0, 2.8);
-        float rightDrift = flowingField(vec2(fallP.y * 0.069, 8.9), 1.0, 3.7);
-        float leftEdge = 0.004 + breakup * (0.012 + leftDrift * 0.037);
-        float rightEdge = 0.996 - breakup * (0.012 + rightDrift * 0.034);
-        float edge = smoothstep(leftEdge, leftEdge + 0.024, uv.x)
-          * (1.0 - smoothstep(rightEdge - 0.024, rightEdge, uv.x));
-        // Geometry supplies local stream edges where the lower sheet divides.
-        // This feathers each lobe without new transparent overlay meshes.
-        edge *= smoothstep(0.015, 0.17 + aeration * 0.06, vWaterEdge);
-        float frayedEdge = (1.0 - smoothstep(0.055, 0.15, min(uv.x, 1.0 - uv.x))) * breakup;
-        float air = mix(1.0, 0.45 + fineFlow * 0.55, frayedEdge * fineResolve);
-        float dispersed = flowingField(vec2(fallP.x * 1.35, fallP.y * 0.09), 2.0, 3.2);
-        float foot = smoothstep(0.008, 0.17 + dispersed * 0.10, uv.y);
-        alpha = edge * air * foot * (0.61 + broadRibbon * 0.20 + threadFoam * 0.07);
-        alpha = mix(alpha, edge * 0.97, pow(uv.y, 18.0));
+        float down = 1.0 - uv.y;
+        float across = uv.x * 0.89 * uWorldScale.x;
+        float distanceDown = down * 7.25 * uWorldScale.y;
+        // Travel time grows as sqrt(distance): the same moving mark stretches
+        // and accelerates down the fall instead of sliding on a vertical belt.
+        float travel = sqrt(distanceDown + 0.18) - sqrt(0.18);
+        float shear = waterField(vec2(across * 0.38, travel * 0.45)) - 0.5;
+        float body = fallingField(vec2(across * 1.30 + shear * 0.60, -travel * 3.20), 2.0, 7.3);
+        float opening = fallingField(vec2(across * 1.12 + shear * 0.90, -travel * 4.80), 2.0, 10.6);
+        float breakup = smoothstep(0.065, 0.78, down);
+        float apertureWidth = max(fwidth(opening), 0.015);
+        float torn = smoothstep(0.22 + breakup * 0.16, 0.52 + breakup * 0.15 + apertureWidth, opening);
+        float coverage = mix(1.0, torn, breakup * 0.96);
+        vec2 threadP = vec2(across * 3.1 + shear, -travel * 6.5);
+        float threadWidth = max(length(dFdx(threadP)), length(dFdy(threadP)));
+        float threadResolve = 1.0 - smoothstep(0.65, 1.65, threadWidth);
+        float threads = flowingField(threadP, 3.0, 9.1);
+        float fineFoam = smoothstep(0.56, 0.80, threads) * threadResolve;
+        float crest = pow(uv.y, 26.0);
+        float foam = 0.52 + body * 0.12 + fineFoam * 0.10 + breakup * 0.14 + crest * 0.30;
+        float facing = abs(dot(normalize(vWaterNormal), normalize(vWaterView)));
+        color = mix(uWater * vec3(0.58, 0.88, 1.03), uFoam, clamp(foam, 0.0, 0.97));
+        color *= 0.93 + facing * 0.07;
+        float edgeNoise = flowingField(vec2(across * 1.2, -travel * 1.7), 2.0, 4.1);
+        float edge = smoothstep(0.008 + breakup * 0.015, 0.13 + breakup * 0.15 + edgeNoise * 0.05, vWaterEdge);
+        float foot = smoothstep(0.008, 0.20 + body * 0.13, uv.y);
+        alpha = edge * foot * coverage * mix(0.88, 0.72, breakup);
+        alpha = mix(alpha, edge * 0.98, crest);
+        if (vWaterParticle.x > 0.5) {
+          float life = vWaterParticle.y;
+          float visible = smoothstep(0.02, 0.16, life) * (1.0 - smoothstep(0.64, 0.98, life));
+          color = mix(uWater, uFoam, 0.91);
+          alpha = visible * 0.23 * pow(facing, 1.3);
+        }
       } else {
         vec2 p = vWaterPosition.xz;
         float flow = clamp(vWaterFlow, 0.0, 1.0);
@@ -625,7 +686,10 @@ export function createMaterials(THREE) {
         float streamResolve = 1.0 - smoothstep(0.70, 1.6, streamWidth);
         float stream = flowingField(streamP + bend, 2.0, 4.7);
         float streamFoam = smoothstep(0.73, 0.90, stream) * flow * streamResolve * mix(0.35, 1.0, uWaterPigment);
-        color = mix(color, uFoam, glint * (1.0 - flow * 0.65) + shore * 0.035 + shoreFoam * 0.13 + streamFoam * 0.038);
+        // The final river meters aerate before rolling over the lip. Flow is
+        // zero throughout the lake, so its independent UVs cannot form a rim.
+        float lipFoam = pow(clamp(uv.y, 0.0, 1.0), 36.0) * flow * (0.33 + stream * 0.14);
+        color = mix(color, uFoam, glint * (1.0 - flow * 0.65) + shore * 0.035 + shoreFoam * 0.13 + streamFoam * 0.038 + lipFoam);
         alpha = 1.0;
       }
       color = mix(color, mix(uWater, uFoam, 0.2), uCozy * 0.24);
@@ -646,6 +710,7 @@ export function createMaterials(THREE) {
     materials[key].defaultAttributeValues.waterDepth = [0.5];
     materials[key].defaultAttributeValues.waterFlow = [0];
     materials[key].defaultAttributeValues.waterEdge = [1];
+    materials[key].defaultAttributeValues.waterParticle = [0,0,0];
     materials[key].userData.castleSurface = key;
   }
 
@@ -659,6 +724,7 @@ export function createMaterials(THREE) {
     shared.uPaintGrain.value = preset.grain;
     shared.uPaintShadow.value.setHex(preset.shadow);
     shared.uPaintMoss.value.setHex(preset.grass);
+    shared.uCloudStrength.value=({original:0.20,fantasy:0.26,ink:0.13,cozy:0.10,ghibli:0.24})[id]??0.26;
     shared.uMeadowStrength.value = ({ original:0.70, fantasy:0.88, ink:0.22, cozy:0.38, ghibli:0.82 })[id] ?? 0.88;
     shared.uRockStrength.value = ({ original:0.76, fantasy:0.92, ink:0.24, cozy:0.36, ghibli:0.84 })[id] ?? 0.92;
     waterUniforms.uWater.value.setHex(preset.water);
@@ -723,13 +789,23 @@ export function createMaterials(THREE) {
     waterUniforms.uSkyLod.value = Math.max(2, Math.log2(width / 80));
   }
 
+  function setSunDirection(direction) {
+    if(!direction || !Number.isFinite(direction.x+direction.y+direction.z) || direction.y<=0)
+      throw new RangeError('Sun direction must be finite and above the horizon');
+    shared.uCloudSlope.value.set(direction.x/direction.y,direction.z/direction.y);
+  }
+  function animateLight(phase) {
+    const cycle=((phase%1)+1)%1,angle=cycle*Math.PI*2;
+    shared.uCloudDrift.value.set(Math.sin(angle)*0.18,(1-Math.cos(angle))*0.10);
+  }
   function animate(phase) {
     // Keep exact integer endpoints identical, including negative phases.
     waterUniforms.uPhase.value = ((phase % 1) + 1) % 1;
   }
   function setWorldScale(horizontal=1,vertical=1) {
     waterUniforms.uWorldScale.value.set(horizontal,vertical);
+    shared.uLandscapeScale.value=Math.max(0.001,horizontal);
   }
   setStyle('fantasy');
-  return { materials, setStyle, animate, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
+  return { materials, setStyle, animate, animateLight, setSunDirection, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
 }
