@@ -96,30 +96,110 @@ export function buildAcropolis(THREE, materials, terrain) {
     }
   }
 
-  // Long low walls have broad missing sections, stepped fracture silhouettes,
-  // and weathered blocks. Their foundations continue below the sampled slope.
+  // Coursed rubble runs through each surviving wall, rather than assembling
+  // separate vertical columns. The staggered joints belong to the construction;
+  // broad fractures cut across those courses where the upper wall has fallen.
+  let wallStones=0,foundationSegments=0;
   function ruinWall(a,b,heights,width=.42) {
     const dx=b[0]-a[0],dz=b[1]-a[1],length=Math.hypot(dx,dz),yaw=-Math.atan2(dz,dx);
-    const c=Math.cos(yaw),s=Math.sin(yaw),count=heights.length,unit=length/count;
-    for(let i=0;i<count;i++){
-      const x=a[0]+dx*(i+.5)/count,z=a[1]+dz*(i+.5)/count;
-      const base=ground(x,z)-.045;
-      let foot=base-.02;
-      for(const along of [-1,1])for(const across of [-1,1])foot=Math.min(foot,
-        ground(x+c*along*unit*.52+s*across*width*.52,z-s*along*unit*.52+c*across*width*.52)-.06);
-      if(foot<base-.025)stamp(block,'stone',[x,(foot+base+.06)/2,z],[unit-.008,base+.06-foot,width+.03],[0,yaw,0]);
-      const rows=Math.max(1,Math.round(heights[i]/.19));
-      for(let row=0;row<rows;row++){
-        const cuts=row%2?[0,.36,1]:[0,.66,1];
-        for(let part=0;part<2;part++){
-          const span=(cuts[part+1]-cuts[part])*unit,off=(cuts[part+1]+cuts[part]-1)*unit*.5;
-          const top=row===rows-1,chip=top&&((i+part)%3!==0);
-          const key=(i+row*3+part)%37===4?'rock':(i+row+part)%17===3?'stoneLight':'stone';
-          stamp(chip?wornBlock:masonryBlock,key,[x+c*off,base+(row+.5)*.19,z-s*off],
-            [span-.008,.184,width+(row===0?.035:0)],[0,yaw+(top?(random()-.5)*.025:0),0]);
-        }
+    const c=Math.cos(yaw),s=Math.sin(yaw),at=(u,v=0)=>[a[0]+c*u+s*v,a[1]-s*u+c*v];
+    const sample=u=>{const [x,z]=at(u);return ground(x,z);};
+    const unit=length/heights.length;
+    // Retain the existing deterministic rubble arrangement outside these walls.
+    for(let i=0;i<heights.length*2;i++)random();
+    // These are the old surviving masses, with the same height/footprint. An
+    // inclined break connects them instead of identical rectangular stair tops.
+    const crown=heights.map((h,i)=>sample((i+.5)*unit)+h-.045);
+    function topAt(u) {
+      const f=Math.max(0,Math.min(heights.length-1,u/unit-.5)),i=Math.floor(f);
+      const t=f-i,linear=crown[i]*(1-t)+crown[Math.min(i+1,crown.length-1)]*t;
+      // A small broad lost section, cut once per wall, interrupts long straight
+      // fracture planes. It never raises the original surviving wall envelope.
+      const breakAt=.48+.17*Math.sin(a[0]*1.7+b[1]*2.1);
+      const hollow=Math.max(0,1-Math.abs(u/length-breakAt)/.16);
+      return linear-(length>1.4?.14:.07)*hollow;
+    }
+
+    // One continuous buried footing follows the actual rendered hillside on
+    // both faces. Level masonry above it keys into the slope without a floating
+    // cuboid plinth or exposed row of unrelated support blocks.
+    const footCount=Math.max(2,Math.ceil(length/.23)),p=[],uv=[],indices=[];
+    let datum=Infinity;
+    for(let i=0;i<=footCount;i++){
+      const u=i/footCount*length;
+      for(const across of [-1,1]){
+        const [x,z]=at(u,across*(width*.5+.016)),grade=ground(x,z);
+        p.push(x,grade+.016,z,x,grade-.095,z);uv.push(u,across, u,across);
+        datum=Math.min(datum,grade-.055);
       }
-      if(i%5===2&&rows>3)stamp(wornBlock,'stone',[x,base+.24,z],[.35,.58,width+.27],[0,yaw,0]);
+      if(i<footCount){
+        const a=i*4,b=a+4;
+        indices.push(a,a+2,b,b,a+2,b+2, a+1,b+1,a+3,b+1,b+3,a+3,
+          a,b,a+1,a+1,b,b+1, a+2,a+3,b+2,a+3,b+3,b+2);
+      }
+    }
+    indices.push(0,1,2,1,3,2);
+    const end=footCount*4;indices.push(end,end+2,end+1,end+1,end+2,end+3);
+    const footing=geometry(new THREE.BufferGeometry());
+    footing.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+    footing.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+    footing.setIndex(indices);footing.computeVertexNormals();stamp(footing,'stone',[0,0,0]);
+    foundationSegments+=footCount;
+
+    // The bond uses unequal lengths and a different offset for every course.
+    // Lower stones retain level bed joints; the broken crown clips individual
+    // stones to wedges without making every surviving top a repeating chip.
+    const courseHeights=[.178,.158,.190,.169,.181,.162],offsets=[.03,.22,.09,.29,.16,.34];
+    const ceiling=Math.max(...crown);let bottom=datum,row=0;
+    while(bottom<ceiling-.035){
+      const course=courseHeights[row%courseHeights.length],joint=.007;
+      let left=-offsets[row%offsets.length],stone=0;
+      while(left<length-.045){
+        const rhythm=.5+.5*Math.sin(row*2.39+stone*4.73+length*3.17);
+        let right=left+.27+.23*rhythm;
+        if(length-right<.14)right=length;
+        const x0=Math.max(0,left)+joint*.5,x1=Math.min(length,right)-joint*.5;
+        if(x1-x0>.085){
+          const xs=[x0,x0+(x1-x0)*.33,x0+(x1-x0)*.73,x1];
+          const top=xs.map(u=>Math.min(course-joint,topAt(u)-bottom));
+          const surface=Math.min(...[x0,x1].flatMap(u=>[-1,1].map(v=>{const [x,z]=at(u,v*width*.5);return ground(x,z);})));
+          // Buried courses need no invisible stones; leave enough engagement
+          // below the footing to support every visible wall face on a slope.
+          if(Math.max(...top)>.052&&bottom+course>surface-.10){
+            const shape=new THREE.Shape(),span=x1-x0;
+            shape.moveTo(0,0);shape.lineTo(span,0);
+            for(let i=xs.length-1;i>=0;i--)shape.lineTo(xs[i]-x0,Math.max(.014,top[i]));
+            shape.closePath();
+            const depth=width+.010*Math.sin(stone*2.7+row*1.3);
+            const stoneGeometry=geometry(new THREE.ExtrudeGeometry(shape,{depth,
+              bevelEnabled:true,bevelSize:.0045,bevelThickness:.006,bevelSegments:1,steps:1}));
+            stoneGeometry.translate(0,0,-depth/2);
+            const exposed=xs.some(u=>topAt(u)<bottom+course+.055);
+            if(exposed){
+              // The broken core is not a neatly cut slab: its two faces recede
+              // unequally and the crown loses shallow wedges across its width.
+              // Bed joints stay level and the lower stone still bears fully on
+              // the course below. Only the exposed fracture changes silhouette.
+              const vertices=stoneGeometry.attributes.position,phase=row*2.17+stone*3.41+length;
+              for(let i=0;i<vertices.count;i++){
+                const px=vertices.getX(i),py=vertices.getY(i),pz=vertices.getZ(i);
+                const crownHeight=Math.max(.014,Math.min(course-joint,topAt(x0+px)-bottom));
+                const weight=Math.min(1,Math.max(0,py/crownHeight))**3;
+                const across=Math.max(-1,Math.min(1,pz/(depth*.5)));
+                const loss=.012+.018*(.5+.5*Math.sin(phase+px*9))
+                  +.025*(.5+.5*Math.cos(phase*.73+across*2.2+px*4));
+                vertices.setXYZ(i,px+weight*.008*Math.sin(phase+across*1.8),
+                  py-weight*Math.min(loss,crownHeight*.55),pz*(1-weight*(.13+.055*Math.sin(phase+px*5))));
+              }
+              stoneGeometry.computeVertexNormals();
+            }
+            const [x,z]=at(x0),key=(row*11+stone*7+heights.length)%29===5?'stoneLight':'stone';
+            stamp(stoneGeometry,key,[x,bottom,z],[1,1,1],[0,yaw,0]);wallStones++;
+          }
+        }
+        left=right;stone++;
+      }
+      bottom+=course;row++;
     }
   }
   ruinWall([-5.7,-3.3],[-4.9,-5.1],[.30,.48,.83,1.02,1.22],.49);
@@ -424,7 +504,7 @@ export function buildAcropolis(THREE, materials, terrain) {
   const gate=world(gateX,gateZ);
   const bounds=new THREE.Box3().setFromObject(group),size=bounds.getSize(new THREE.Vector3());
   const stats={triangles,vertices,drawCalls:group.children.length,towers:2,pavilions:0,gateways:1,houses:4,
-    footprint:[size.x,size.z],maximumAddedHeight:bounds.max.y-anchor.y,gardenTrees:4,ivyLeaves,pavingStones,
+    footprint:[size.x,size.z],maximumAddedHeight:bounds.max.y-anchor.y,gardenTrees:4,ivyLeaves,pavingStones,wallStones,foundationSegments,
     gatePosition:[gate.x,gateBase,gate.z],clearingRadius:9.85};
   group.userData.kind='castle-precinct';
   return {group,reservedPositions,stats};

@@ -81,6 +81,7 @@ const PIGMENT_GLSL = /* glsl */`
   uniform float uCloudStrength;
   uniform vec2 uCloudSlope;
   uniform vec2 uCloudDrift;
+  uniform vec3 uLookoutAnchor;
   uniform vec3 uPaintShadow;
   uniform vec3 uPaintMoss;
   uniform vec3 uUplandRock;
@@ -124,7 +125,7 @@ const PIGMENT_GLSL = /* glsl */`
     cover = smoothstep(0.23, 0.78, cover);
     // A break in the clouds leaves the summit/approach and travelers in light.
     vec2 summit = vec2(-3.1, -1.7) - 2.78 * uCloudSlope;
-    vec2 lookout = vec2(-6.9, 10.45) + 3.3 * uCloudSlope;
+    vec2 lookout = uLookoutAnchor.xz - uLookoutAnchor.y * uCloudSlope;
     float summitOpening = 1.0 - smoothstep(0.55, 1.35, length((p-summit)/vec2(2.6,2.2)));
     float lookoutOpening = 1.0 - smoothstep(0.30, 1.15, length((p-lookout)/vec2(1.4,0.8)));
     return cover * (1.0 - max(summitOpening, lookoutOpening) * 0.96);
@@ -253,6 +254,7 @@ export function createMaterials(THREE) {
     uUplandRock:{value:new THREE.Color(PALETTES.fantasy.rock)},
     uLandscapeScale:{value:1},uCloudStrength:{value:0},
     uCloudSlope:{value:new THREE.Vector2(28/25,8/25)},uCloudDrift:{value:new THREE.Vector2()},
+    uLookoutAnchor:{value:new THREE.Vector3(-6.9,-3.3,10.45)},
     uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
     uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 },
     uRockTexture:{ value:whiteFallback() }, uRockEnabled:{ value:0 },
@@ -396,19 +398,42 @@ export function createMaterials(THREE) {
             pigment = (broadPigment - 0.5) * 0.045;
           }
           if (uPaintSurface > 5.5) {
-            // Mineral washes and occasional vertical rain traces soften clean
-            // masonry without drawing a second, conflicting grid of bricks.
+            // Limestone has connected mineral washes across adjacent blocks.
+            // World coordinates preserve physical scale on merged walls,
+            // individual voussoirs, and instanced paving. These are albedo
+            // marks, not a second brick grid or artificial bevel shadows.
             vec3 masonryPosition = vPaintWorldPosition;
-            float mineralWash = paintNoise(masonryPosition * vec3(0.58, 0.31, 0.58) + vec3(4.7, 1.8, 8.2));
-            float rainWash = paintNoise(masonryPosition * vec3(1.35, 0.12, 1.35) + vec3(9.3, 4.1, 2.7));
-            float mineralCloud = paintNoise(masonryPosition * vec3(2.4, 1.7, 2.4) + vec3(3.1, 7.3, 1.9));
-            float upright = 1.0 - abs(normalize(vPaintWorldNormal).y);
-            float weather = smoothstep(0.57, 0.79, rainWash) * upright;
-            float age = uPaintSurface > 6.5 ? 0.43 : 0.90;
-            vec3 mineralTint = mix(vec3(0.84, 0.90, 0.93), vec3(1.08, 1.025, 0.87), smoothstep(0.25, 0.74, mineralWash));
-            mineralTint = mix(mineralTint, vec3(0.83, 0.89, 0.81), weather * 0.30);
+            vec3 masonryNormal = normalize(vPaintWorldNormal);
+            float masonryFootprint = max(length(dFdx(masonryPosition)), length(dFdy(masonryPosition)));
+            float mineralWash = paintNoise(masonryPosition * vec3(0.72, 0.39, 0.72) + vec3(4.7, 1.8, 8.2));
+            float limeWash = paintNoise(masonryPosition * vec3(1.70, 0.91, 1.70) + vec3(2.4, 6.1, 1.8));
+            vec3 rainPosition = masonryPosition;
+            rainPosition.xz += (mineralWash - 0.5) * 0.16;
+            float rainWash = paintNoise(rainPosition * vec3(3.6, 0.33, 3.6) + vec3(9.3, 4.1, 2.7));
+            float upright = 1.0 - abs(masonryNormal.y);
+            float sheltered = smoothstep(-0.25, 0.82, dot(masonryNormal, normalize(vec3(-0.67, -0.24, 0.70))));
+            float weather = smoothstep(0.43, 0.76, rainWash) * upright
+              * smoothstep(0.24, 0.69, mineralWash) * (0.48 + sheltered * 0.52);
+            float age = uPaintSurface > 6.5 ? 0.62 : 0.94;
+            vec3 mineralTint = mix(vec3(0.70, 0.80, 0.83), vec3(1.09, 1.055, 0.94), smoothstep(0.30, 0.68, mineralWash));
+            mineralTint = mix(mineralTint, vec3(0.70, 0.77, 0.69), weather * 0.38);
+            float chalk = smoothstep(0.47, 0.80, limeWash) * (0.36 + 0.64 * max(masonryNormal.y, 0.0));
+            mineralTint = mix(mineralTint, vec3(1.10, 1.07, 1.0), chalk * 0.30);
             diffuseColor.rgb *= mix(vec3(1.0), mineralTint, age * uPaintPigment);
-            pigment = ((mineralCloud - 0.5) * 0.17 - weather * 0.065) * age;
+            if (uRockEnabled > 0.5) {
+              // Borrow only quiet, cream-relative brushwork from the existing
+              // painted rock image. Filtered triplanar sampling avoids UV seams
+              // and keeps warm strata from turning limestone orange or striped.
+              vec3 stonePaint = surfacePaint(uRockTexture, masonryPosition, masonryNormal, 0.64);
+              vec3 stoneRatio = paletteRelativePaint(stonePaint, uRockMean, 0.30, 0.045);
+              diffuseColor.rgb *= mix(vec3(1.0), clamp(stoneRatio, vec3(0.80), vec3(1.13)), age * uPaintPigment * 0.62);
+            }
+            // Close pores stay color-only. Their contribution vanishes before
+            // they occupy less than two pixels, keeping distant masonry calm.
+            float poreVisibility = 1.0 - smoothstep(0.012, 0.030, masonryFootprint);
+            float pores = paintNoise(masonryPosition * 23.0 + vec3(3.1, 7.3, 1.9));
+            pigment = ((limeWash - 0.5) * 0.085 - weather * 0.07
+              + (pores - 0.5) * 0.045 * poreVisibility) * age;
           }
           if (uPaintSurface > 3.5 && uPaintSurface < 4.5) {
             // UVs follow an individual leaf: U base→tip, V edge→edge.
@@ -483,7 +508,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v13-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v14-${surface}`;
     materials[key] = material;
   }
 
@@ -857,6 +882,11 @@ export function createMaterials(THREE) {
       throw new RangeError('Sun direction must be finite and above the horizon');
     shared.uCloudSlope.value.set(direction.x/direction.y,direction.z/direction.y);
   }
+  function setLookoutAnchor(position) {
+    if (!position || !Number.isFinite(position.x + position.y + position.z))
+      throw new TypeError('Lookout anchor must have finite world coordinates');
+    shared.uLookoutAnchor.value.copy(position).divideScalar(shared.uLandscapeScale.value);
+  }
   function animateLight(phase) {
     const cycle=((phase%1)+1)%1,angle=cycle*Math.PI*2;
     shared.uCloudDrift.value.set(Math.sin(angle)*0.18,(1-Math.cos(angle))*0.10);
@@ -870,5 +900,5 @@ export function createMaterials(THREE) {
     shared.uLandscapeScale.value=Math.max(0.001,horizontal);
   }
   setStyle('fantasy');
-  return { materials, setStyle, animate, animateLight, setSunDirection, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
+  return { materials, setStyle, animate, animateLight, setSunDirection, setLookoutAnchor, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
 }

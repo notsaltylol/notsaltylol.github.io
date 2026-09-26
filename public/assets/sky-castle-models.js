@@ -172,7 +172,7 @@ export function buildCastle(THREE, materials) {
     add(new THREE.ConeGeometry(0.041, height * 0.42, 12), 'gold', [x, y + height * 0.83, z]);
   }
 
-  function masonryCourses(x, z, radius, height, base, windows) {
+  function masonryCourses(x, z, radius, height, base, windows, courseTop = height - 0.21) {
     const radiusAt = (y) => {
       const middle = height * 0.48;
       const t = y < middle ? (y - 0.19) / (middle - 0.19) : (y - middle) / (height - 0.15 - middle);
@@ -200,12 +200,12 @@ export function buildCastle(THREE, materials) {
     const columns = Math.max(9, Math.round(radius * Math.PI * 2 / 0.22));
     // Hairline mortar is actual recessed-looking geometry. Window openings
     // interrupt the joints, and alternate rows use a half-brick bond.
-    for (let row = 0, y = 0.22; y < height - 0.21; row++, y += courseHeight) {
+    for (let row = 0, y = 0.22; y < courseTop; row++, y += courseHeight) {
       for (let segment = 0; segment < 80; segment++) {
         const a0 = segment / 80 * Math.PI * 2, a1 = (segment + 1) / 80 * Math.PI * 2;
         if (clearOfWindows(a0, y) && clearOfWindows(a1, y)) band(a0, a1, y - 0.0015, y + 0.0015);
       }
-      const yTop = Math.min(y + courseHeight, height - 0.20);
+      const yTop = Math.min(y + courseHeight, courseTop);
       for (let column = 0; column < columns; column++) {
         const angle = (column + (row % 2) * 0.5) / columns * Math.PI * 2;
         if (![y, (y + yTop) / 2, yTop].every(level => clearOfWindows(angle, level))) continue;
@@ -221,18 +221,36 @@ export function buildCastle(THREE, materials) {
     add(geometry, 'dark');
   }
 
-  function tower({ x, z, radius, height, base = 0.43, roof = 'dome', roofHeight = 0.70, windows = 6 }) {
+  function tower({ x, z, radius, height, base = 0.43, roof = 'dome', roofHeight = 0.70, windows = 6, belfry = false, finialHeight = radius < 0.3 ? 0.25 : 0.34 }) {
     const top = base + height;
     // Entasis and several ledges make these feel like built masonry towers,
     // instead of uniform cylinders stacked under primitive cones.
-    lathe('stone', x, base, z, [[0, 0], [radius * 1.10, 0], [radius * 1.10, 0.13], [radius, 0.19], [radius * 0.97, height * 0.48], [radius * 0.94, height - 0.15], [radius, height - 0.12], [radius, height], [0, height]]);
-    masonryCourses(x, z, radius, height, base, windows);
+    const galleryBottom = height - .85;
+    const body = [[0, 0], [radius * 1.10, 0], [radius * 1.10, 0.13], [radius, 0.19], [radius * 0.97, height * 0.48]];
+    if (belfry) body.push([radius * .956, galleryBottom + .025], [0, galleryBottom + .025]);
+    else body.push([radius * 0.94, height - 0.15], [radius, height - 0.12], [radius, height], [0, height]);
+    lathe('stone', x, base, z, body);
+    masonryCourses(x, z, radius, height, base, windows, belfry ? galleryBottom - .025 : height - .21);
+    if (belfry) {
+      // One open octagonal lantern gives the keep a clear dominant crown.
+      // Real deep arches leave a dark interval below the copper dome, with
+      // no closed cylinder or window decal behind the openings.
+      const apothem = radius * .99 * Math.cos(Math.PI / 8);
+      const bay = 2 * apothem * Math.tan(Math.PI / 8);
+      for (let side = 0; side < 8; side++) {
+        const angle = side * Math.PI / 4;
+        add(arcadeGeometry(THREE, bay + .018, .85, .065, 1, .66), 'stone',
+          [x + Math.sin(angle) * (apothem - .0325), base + galleryBottom, z + Math.cos(angle) * (apothem - .0325)],
+          [0, angle, 0], [1, 1, 1], true);
+      }
+      cylinder('stoneLight', x, base + galleryBottom + .015, z, radius * 1.035, radius * 1.055, .055);
+    }
     for (const level of [0.17, height + 0.015]) {
       cylinder('stone', x, base + level, z, radius * 1.045, radius * 1.065, 0.045);
     }
     cylinder('stoneLight', x, top + 0.055, z, radius * 1.15, radius * 1.05, 0.08);
     cylinder('roof', x, top + 0.105, z, radius * 1.12, radius * 1.12, 0.020);
-    for (let level = 0; level < 2; level++) {
+    for (let level = 0; level < (belfry ? 1 : 2); level++) {
       for (let i = 0; i < windows; i++) {
         const angle = i / windows * Math.PI * 2 + (level ? Math.PI / windows : 0);
         const r = radius * (level ? 0.955 : 0.99);
@@ -261,7 +279,7 @@ export function buildCastle(THREE, materials) {
         add(new THREE.TorusGeometry(ringRadius + 0.003, 0.009, 4, 40), 'roof', [x, roofBase + roofHeight * t, z], [Math.PI / 2, 0, 0]);
       }
     }
-    finial(x, roofBase + roofHeight, z, radius < 0.3 ? 0.25 : 0.34);
+    finial(x, roofBase + roofHeight, z, finialHeight);
     // Slender buttresses run into the lower stonework. Their sloped cap is a
     // three-point prism rather than a series of blocky crenellations.
     for (let i = 0; i < 4; i++) {
@@ -271,12 +289,12 @@ export function buildCastle(THREE, materials) {
     }
   }
 
-  // Tall forms sit behind the terrace. Their off-center distribution leaves
-  // readable gaps of sky and distinct roof lines through an entire orbit.
-  tower({ x: -0.43, z: -0.49, radius: 0.42, height: 2.91, roofHeight: 0.77 });
-  tower({ x: 0.48, z: -0.71, radius: 0.275, height: 3.14, roof: 'spire', roofHeight: 0.73, windows: 5 });
-  tower({ x: 1.05, z: 0.02, radius: 0.32, height: 2.06, roofHeight: 0.58, windows: 5 });
-  tower({ x: -1.11, z: 0.21, radius: 0.27, height: 1.74, roof: 'spire', roofHeight: 0.64, windows: 5 });
+  // A dominant lantern and two lower roof steps replace competing crowns.
+  // The keep retains its original footprint, scale, and highest finial.
+  tower({ x: -0.43, z: -0.49, radius: 0.42, height: 3.0064, roofHeight: 0.77, belfry: true });
+  tower({ x: 0.48, z: -0.71, radius: 0.275, height: 2.55, roof: 'spire', roofHeight: 0.60, windows: 5 });
+  tower({ x: 1.05, z: 0.02, radius: 0.32, height: 2.06, roofHeight: 0.46, windows: 5, finialHeight: .24 });
+  tower({ x: -1.11, z: 0.21, radius: 0.27, height: 1.62, roof: 'spire', roofHeight: 0.38, windows: 5, finialHeight: .18 });
 
   function roofedHall(x, y, z, width, height, depth) {
     box('stone', x, y + height / 2, z, width, height, depth, [0, 0, 0], true);

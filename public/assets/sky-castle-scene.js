@@ -109,6 +109,8 @@ const foreground = buildForegroundDetails(THREE,m,ledge,{scale:LAND_SCALE,viewin
 for(const [i,u,v,height] of [[0,-3,.2,1.25],[1,-2.2,.6,.9],[2,-1.6,0,1.4],[3,-.7,.8,1.05]]){const x=ledge.position.x+u*LAND_SCALE,z=ledge.position.z+v*LAND_SCALE;const tree=buildTree(THREE,m,{height,kind:'broadleaf',seed:79+i});tree.position.set(x,foreground.groundHeight(x,z)-.025,z);scene.add(tree);}
 const lookoutStation=new THREE.Vector3(ledge.position.x+lookoutLand.viewingPoint.x,0,ledge.position.z+lookoutLand.viewingPoint.z);
 lookoutStation.y=foreground.groundHeight(lookoutStation.x,lookoutStation.z);
+// Keep the sunlight opening attached when the authored viewing point moves.
+palette.setLookoutAnchor(lookoutStation);
 traveler(lookoutStation.x,lookoutStation.z,1.5,lookoutStation.y);
 traveler(lookoutStation.x+.9,lookoutStation.z+.2,1.0,foreground.groundHeight(lookoutStation.x+.9,lookoutStation.z+.2));
 const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-1000,
