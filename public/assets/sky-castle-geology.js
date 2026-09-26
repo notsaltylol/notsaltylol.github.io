@@ -134,6 +134,54 @@ function coreRadius(depth){
   }
   return .1768;
 }
+// Five linked buttresses interrupt the large principal faces. These are
+// authored structural ribs and adjoining clefts, not a higher noise octave.
+// Their unequal lengths finish inside the supporting body rather than making
+// a repeated row of hanging blades along the bottom silhouette.
+const buttresses=[
+  // azimuth, breadth, relief, lean, start, end, adjoining cleft depth
+  [.38,.39,.54,.22,.09,.67,.26],
+  [2.35,.44,.57,-.44,.34,.84,.34],
+  [2.71,.32,.65,-.12,.065,.61,.44],
+  [3.66,.35,.44,.27,.13,.63,.28],
+  [5.13,.47,.63,-.31,.10,.77,.31],
+];
+const angularDistance=(a,b)=>{
+  const delta=(a-b)%(Math.PI*2);
+  return delta>Math.PI?delta-Math.PI*2:delta< -Math.PI?delta+Math.PI*2:delta;
+};
+const ledges=[
+    [2.68,.63,-2.85,.32,.21,-.16],
+    [.15,.62,-.91,.27,-.22,.25],
+    [4.78,.72,-2.02,.35,.28,.10],
+  ];
+function structuralRelief(angle,depth,height,radius){
+  let relief=0;
+  for(const [azimuth,width,strength,lean,start,end,cut]of buttresses){
+    const center=azimuth+lean*depth;
+    const across=Math.abs(angularDistance(angle,center))/width;
+    const plane=clamp01((1-across)/.80);
+    const rib=plane*smooth(0,.18,plane);
+    const along=smooth(start,start+.13,depth)*(1-smooth(end-.18,end,depth));
+    // The cleft crosses one shoulder obliquely. Its broad V is resolved by
+    // several mesh cells; it never jumps from an off-axis rock to the core.
+    const jointCenter=center+width*(.76-.27*depth);
+    const joint=clamp01(1-Math.abs(angularDistance(angle,jointCenter))/.094);
+    relief+=(strength*rib-cut*joint*smooth(0,.16,joint))*along;
+  }
+  // Three unequal recessed beds join different buttress systems. Each bed
+  // occupies part of one face and dips across it, never wrapping as a ring.
+  const rockX=Math.cos(angle)*radius,rockZ=Math.sin(angle)*radius*.76;
+  for(const [azimuth,width,level,cut,slopeX,slopeZ]of ledges){
+    const across=clamp01(1-Math.abs(angularDistance(angle,azimuth))/width);
+    const sector=smooth(0,.28,across);
+    const bed=height+slopeX*rockX+slopeZ*rockZ;
+    const notch=smooth(level-.65,level-.30,bed)*(1-smooth(level-.035,level+.11,bed));
+    relief-=cut*sector*notch;
+  }
+  return relief*smooth(.045,.12,depth)*(1-smooth(.80,.94,depth));
+}
+
 /** Radial envelope of connected oblique crags, in unscaled island units. */
 export function cliffFormation(angle,depth,height=1.14-6.34*depth){
   const t=clamp01(depth),dx=Math.cos(angle),dz=Math.sin(angle)*.76;
@@ -164,6 +212,7 @@ export function cliffFormation(angle,depth,height=1.14-6.34*depth){
       radius=Math.max(radius,joined);
     }
   }
+  radius+=structuralRelief(angle,t,height,radius);
   // Fine unequal strata bend across neighboring wedges, with a few locally
   // projecting lips. Low amplitude leaves the principal fracture planes clear.
   const reveal=smooth(.045,.15,t)*(1-smooth(.80,.99,t));

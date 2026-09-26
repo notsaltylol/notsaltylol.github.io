@@ -41,7 +41,12 @@ export function createAtmosphere(THREE, {
         // Grade gently in a perceptual space; keep the painted value structure.
         vec3 c=pow(max(color,vec3(0.0)),vec3(1.0/2.2));
         float value=dot(c,vec3(.2126,.7152,.0722));
-        if(paintedStyle>.5 && paintedStyle<1.5){
+        if(paintedStyle<.5){
+          // Keep cream cloud highlights while giving Fantasy's open sky and
+          // cool cloud faces a clearer blue family beside the green land.
+          float blue=smoothstep(.06,.28,c.b-c.r);
+          c=mix(c,c*vec3(.82,.93,1.10),blue*.70);
+        }else if(paintedStyle>.5 && paintedStyle<1.5){
           c=mix(vec3(value),c,.86)*vec3(1.025,1.008,.97);
         }else if(paintedStyle>1.5 && paintedStyle<2.5){
           c=mix(vec3(value),c,.72)*vec3(1.02,1.0,.91);
@@ -71,8 +76,14 @@ export function createAtmosphere(THREE, {
         float longitudeOffset=atan(sin(longitude-forwardLongitude),cos(longitude-forwardLongitude));
         // Widen the panorama in angular space. Extrapolating 3D ray vectors
         // crosses a false pole at steep camera elevations, creating a starburst.
-        float u=(forwardLongitude+longitudeOffset*1.7+.24)*panoramaRepeat/6.28318530718+.5+panoramaDrift;
-        float v=.64+asin(clamp(d.y,-1.0,1.0))*.55;
+        // Frame a wider span of the painting: a bright bank to one side,
+        // an open summit silhouette, and a distant cloud sea below the rock.
+        float u=(forwardLongitude+longitudeOffset*2.5+1.15)*panoramaRepeat/6.28318530718+.5+panoramaDrift;
+        float v=.62+asin(clamp(d.y,-1.0,1.0))*.78;
+        // The painting contains a cloud sea, not a textured lower pole. Fade
+        // into distant mist before its last rows stretch at steep views.
+        float lowerHaze=1.0-smoothstep(.03,.18,v);
+        float upperHaze=smoothstep(.91,1.06,v);
         // Preserve painted cloud structure at high/low viewing elevations.
         // A hard clamp would stretch one edge row over half the sky. These
         // soft tails retain a continuous first derivative into the poles.
@@ -81,7 +92,7 @@ export function createAtmosphere(THREE, {
         // Explicit continuous derivatives prevent the atan seam from selecting
         // a blurry mip level when the orbit crosses the panorama join.
         vec3 ld=d;
-        float longitudeScale=1.7*panoramaRepeat/(6.28318530718*max(.0001,ld.x*ld.x+ld.z*ld.z));
+        float longitudeScale=2.5*panoramaRepeat/(6.28318530718*max(.0001,ld.x*ld.x+ld.z*ld.z));
         float duX=(-ld.z*dFdx(ld.x)+ld.x*dFdx(ld.z))*longitudeScale;
         float duY=(-ld.z*dFdy(ld.x)+ld.x*dFdy(ld.z))*longitudeScale;
         vec3 paint=textureGrad(panorama,vec2(u,v),vec2(duX,dFdx(v)),vec2(duY,dFdy(v))).rgb;
@@ -91,6 +102,8 @@ export function createAtmosphere(THREE, {
         float seamBlend=(1.0-smoothstep(0.0,.045,min(wrapped,1.0-wrapped)))*.5;
         vec3 seamPaint=textureGrad(panorama,vec2(1.0-wrapped,v),vec2(-duX,dFdx(v)),vec2(-duY,dFdy(v))).rgb;
         vec3 sky=paintedGrade(mix(paint,seamPaint,seamBlend));
+        sky=mix(sky,mix(skyHorizon,skyLow,.20),lowerHaze);
+        sky=mix(sky,skyTop,upperHaze);
         #else
         float altitude=smoothstep(-.53,-.08,d.y);
         vec3 sky=mix(skyLow,skyHorizon,smoothstep(-.80,-.16,d.y));

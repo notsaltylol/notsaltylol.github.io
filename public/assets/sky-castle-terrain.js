@@ -277,7 +277,9 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const cliffSegments = segments * 2, cliffRings = Math.round(72 * Math.max(1, Math.min(2, verticalScale)));
   function inscriptionProtection(a, x, y) {
     const nameX = smooth(-4.65,-4.25,x/scale)*(1-smooth(-1.60,-1.20,x/scale));
-    const nameY = smooth(-2.65,-2.30,y/verticalScale)*(1-smooth(-.25,.05,y/verticalScale));
+    // Protect the fitted letter band, not the entire face beneath it.
+    // The former broad mask erased much of the geology below the lettering.
+    const nameY = smooth(-1.04,-.82,y/verticalScale)*(1-smooth(-.30,-.06,y/verticalScale));
     return 1 - nameX * nameY * smooth(.45,.72,Math.sin(a))*.98;
   }
   function cliffBase(a, t) {

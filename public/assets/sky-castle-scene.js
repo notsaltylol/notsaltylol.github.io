@@ -102,16 +102,21 @@ const foregroundGrass=m.grass.clone();
 foregroundGrass.onBeforeCompile=m.grass.onBeforeCompile;foregroundGrass.customProgramCacheKey=m.grass.customProgramCacheKey;
 foregroundGrass.name='painted-lookout-meadow';
 const lookoutLand=buildLookoutTerrain(THREE,{grass:foregroundGrass,rock:m.rock},{scale:LAND_SCALE});
-const ledge=lookoutLand.group;ledge.position.set(-8*LAND_SCALE,-3.7*HEIGHT_SCALE,10.5*LAND_SCALE);scene.add(ledge);
-const foreground = buildForegroundDetails(THREE,m,ledge,{scale:LAND_SCALE}); scene.add(foreground.group);
-for(const [i,x,z,height] of [[0,-11.0,10.7,1.25],[1,-10.2,11.1,.9],[2,-9.6,10.5,1.4],[3,-8.7,11.3,1.05]]){const tree=buildTree(THREE,m,{height,kind:'broadleaf',seed:79+i});tree.position.set(x*LAND_SCALE,foreground.groundHeight(x*LAND_SCALE,z*LAND_SCALE)-.025,z*LAND_SCALE);scene.add(tree);}
-traveler(-6.9*LAND_SCALE,10.45*LAND_SCALE,1.5,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE));traveler(-6.73*LAND_SCALE,10.46*LAND_SCALE,1.0,foreground.groundHeight(-6.73*LAND_SCALE,10.46*LAND_SCALE));
+// Offset the ridge laterally from the waterfall. The near-person preset can
+// look across open sky to the summit without the ridge covering the island tip.
+const ledge=lookoutLand.group;ledge.position.set(-14*LAND_SCALE,-1.5*HEIGHT_SCALE,16*LAND_SCALE);scene.add(ledge);
+const foreground = buildForegroundDetails(THREE,m,ledge,{scale:LAND_SCALE,viewingPoint:lookoutLand.viewingPoint}); scene.add(foreground.group);
+for(const [i,u,v,height] of [[0,-3,.2,1.25],[1,-2.2,.6,.9],[2,-1.6,0,1.4],[3,-.7,.8,1.05]]){const x=ledge.position.x+u*LAND_SCALE,z=ledge.position.z+v*LAND_SCALE;const tree=buildTree(THREE,m,{height,kind:'broadleaf',seed:79+i});tree.position.set(x,foreground.groundHeight(x,z)-.025,z);scene.add(tree);}
+const lookoutStation=new THREE.Vector3(ledge.position.x+lookoutLand.viewingPoint.x,0,ledge.position.z+lookoutLand.viewingPoint.z);
+lookoutStation.y=foreground.groundHeight(lookoutStation.x,lookoutStation.z);
+traveler(lookoutStation.x,lookoutStation.z,1.5,lookoutStation.y);
+traveler(lookoutStation.x+.9,lookoutStation.z+.2,1.0,foreground.groundHeight(lookoutStation.x+.9,lookoutStation.z+.2));
 const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-1000,
  height:(x,z)=>foreground.groundHeight(x+ledge.position.x,z+ledge.position.z)-ledge.position.y,
  trailDistance:(x,z)=>foreground.trailDistance(x+ledge.position.x,z+ledge.position.z),
  radius:lookoutLand.radius,
  contains:(x,z,margin=0)=>foreground.contains(x+ledge.position.x,z+ledge.position.z,margin)};
-const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'lookout',reservedPositions:[[11,-.5,3],[12.7,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
+const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'lookout',reservedPositions:[[lookoutLand.viewingPoint.x,lookoutLand.viewingPoint.z,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
 
 // A quiet name is assembled from actual slender stone strokes and raycast
 // onto the cliff. There is no rectangular sign or image masquerading as text.
@@ -238,6 +243,10 @@ window.setStyle(Object.hasOwn(STYLES,preferred)?preferred:DEFAULT_STYLE,{persist
 const focus=new THREE.Vector3(),cameraRight=new THREE.Vector3(),cameraUp=new THREE.Vector3(),cameraDirection=new THREE.Vector3();
 let shadowZoom=-1,detailShadowRevision=-1;const shadowFocus=new THREE.Vector3(Infinity,Infinity,Infinity);
 let azimuthOffset=.24,elevation=.37,zoom=1,elapsed=0,last=performance.now(),paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Keep the near-horizontal Lookout orbit valid after a pan or horizontal drag.
+// Other presets retain the normal above-island elevation limits.
+let lookoutOrbit=false;
+const minimumElevation=()=>lookoutOrbit?-.65:.12;
 window.animationConfig={duration:DURATION,fps:12};
 try{
  const [skyTexture]=await Promise.all([atmosphere.ready,meadowReady,rockReady]);
@@ -288,10 +297,20 @@ document.getElementById('loading')?.remove();renderer.domElement.style.visibilit
 const pause=document.getElementById('pause');function updatePause(){pause.textContent=paused?'Play motion':'Pause motion';pause.setAttribute('aria-pressed',String(paused));}updatePause();
 pause.addEventListener('click',()=>{paused=!paused;updatePause();});
 function selectView(id){
- azimuthOffset=.24;elevation=.37;elapsed=0;camera.fov=30;
+ azimuthOffset=.24;elevation=.37;elapsed=0;camera.fov=30;lookoutOrbit=id==='lookout';
  if(id==='castle'){focus.copy(terrain.castleAnchor);focus.y+=1.1;zoom=12;elevation=.43;}
  else if(id==='lake'){focus.set(1.5*LAND_SCALE,terrain.waterLevel,1.9*LAND_SCALE);zoom=7;elevation=.48;}
- else if(id==='lookout'){focus.set(-6.9*LAND_SCALE,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE)+14,10.45*LAND_SCALE);zoom=7;elevation=.12;azimuthOffset=-.56;camera.fov=48;}
+ else if(id==='lookout'){
+  focus.set(0,-1.2*HEIGHT_SCALE,0);
+  const direction=new THREE.Vector3(focus.x-lookoutStation.x,0,focus.z-lookoutStation.z).normalize();
+  const right=new THREE.Vector3(-direction.z,0,direction.x);
+  // These metre-scale offsets make the existing, unscaled people readable.
+  // A wider lens holds the distant summit, floating tip, and nearby path.
+  const eye=lookoutStation.clone().addScaledVector(direction,-7).addScaledVector(right,3);eye.y+=3;
+  const offset=eye.sub(focus),radius=Math.hypot(offset.x,offset.z);
+  zoom=32*LAND_SCALE/radius;azimuthOffset=Math.atan2(offset.x,offset.z);
+  elevation=Math.asin((offset.y*zoom-1)/(32*LAND_SCALE));camera.fov=50;
+ }
  else{focus.set(0,0,0);zoom=1;id='overview';}
  window.castleState.view=id;document.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===id)));
  if(id!=='overview'){paused=true;updatePause();}window.renderFrame(0);
@@ -309,14 +328,14 @@ document.getElementById('zoom-in').addEventListener('click',()=>changeZoom(1.35)
 let drag=null;
 renderer.domElement.addEventListener('contextmenu',event=>event.preventDefault());
 renderer.domElement.addEventListener('pointerdown',event=>{drag={x:event.clientX,y:event.clientY,pan:event.shiftKey||event.button===2};renderer.domElement.setPointerCapture(event.pointerId);paused=true;updatePause();});
-renderer.domElement.addEventListener('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan)pan(dx,dy);else{azimuthOffset-=dx*.007;elevation=Math.max(.12,Math.min(.9,elevation+dy*.005));}drag.x=event.clientX;drag.y=event.clientY;window.renderFrame(elapsed/(DURATION*1000));});
+renderer.domElement.addEventListener('pointermove',event=>{if(!drag)return;const dx=event.clientX-drag.x,dy=event.clientY-drag.y;if(drag.pan)pan(dx,dy);else{azimuthOffset-=dx*.007;elevation=Math.max(minimumElevation(),Math.min(.9,elevation+dy*.005));}drag.x=event.clientX;drag.y=event.clientY;window.renderFrame(elapsed/(DURATION*1000));});
 renderer.domElement.addEventListener('pointerup',()=>{drag=null;});renderer.domElement.addEventListener('pointercancel',()=>{drag=null;});
 renderer.domElement.addEventListener('wheel',event=>{event.preventDefault();changeZoom(Math.exp(-event.deltaY*.001));},{passive:false});
 renderer.domElement.addEventListener('keydown',event=>{
  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','=','-'].includes(event.key))return;
  event.preventDefault();paused=true;updatePause();
  if(event.shiftKey&&event.key.startsWith('Arrow'))pan(event.key==='ArrowLeft'?35:event.key==='ArrowRight'?-35:0,event.key==='ArrowUp'?35:event.key==='ArrowDown'?-35:0);
- else{if(event.key==='ArrowLeft')azimuthOffset-=.08;if(event.key==='ArrowRight')azimuthOffset+=.08;if(event.key==='ArrowUp')elevation=Math.min(.9,elevation+.04);if(event.key==='ArrowDown')elevation=Math.max(.12,elevation-.04);}
+ else{if(event.key==='ArrowLeft')azimuthOffset-=.08;if(event.key==='ArrowRight')azimuthOffset+=.08;if(event.key==='ArrowUp')elevation=Math.min(.9,elevation+.04);if(event.key==='ArrowDown')elevation=Math.max(minimumElevation(),elevation-.04);}
  if(event.key==='+'||event.key==='=')zoom=Math.min(16,zoom*1.2);if(event.key==='-')zoom=Math.max(.65,zoom/1.2);
  window.renderFrame(elapsed/(DURATION*1000));
 });

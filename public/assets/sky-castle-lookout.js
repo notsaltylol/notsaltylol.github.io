@@ -12,8 +12,8 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
   // Broad promontories alternate with shallow coves. Their unequal lengths
   // give the ridge shoulders and a sheltered rear saddle at every orbit angle.
   const corners=[[-9.6,-.2],[-8.7,-1.8],[-6.2,-2.3],[-4.3,-3.3],[-1.1,-2.9],
-    [1,-3.7],[3.3,-3.2],[4.8,-2],[7.4,-1.5],[8.5,-.1],[6.9,1.6],
-    [3.2,2.9],[.6,2.4],[-2.1,3.3],[-5.4,2.4],[-7.6,1.4]];
+    [.7,-.7],[1.9,-.49],[3.3,-.1],[4.8,.7],[7.4,1.4],[8.5,2.4],[6.9,3.2],
+    [3.2,3.5],[.6,2.4],[-2.1,3.3],[-5.4,2.4],[-7.6,1.4]];
   function boundary(a){
     const dx=Math.cos(a),dz=Math.sin(a);let nearest=Infinity;
     for(let i=0;i<corners.length;i++){
@@ -37,6 +37,7 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
     const hill=(cx,cz,sx,sz)=>Math.exp(-(((u-cx)/sx)**2+((v-cz)/sz)**2));
     return scale*(.24+.77*hill(-4,-.3,3.8,2.6)+.37*hill(3,-1.3,2.5,1.9)
       -.20*hill(.1,.4,1.6,1.6)+.025*u-.036*v
+      +.12*hill(1.4,-.45,.9,.8)-.13*Math.max(0,u-1.2)
       +.048*coherentNoise3D(u*.8,17.3,v*.8));
   }
   const positions=[0,height(0,0),0],uvs=[.5,.5],indices=[];
@@ -106,5 +107,5 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
     width:Math.max(...outline.map(p=>p[0]))-Math.min(...outline.map(p=>p[0])),
     rimError,drawCalls:2};
   group.userData.lookout=stats;
-  return {group,radius,stats};
+  return {group,radius,stats,viewingPoint:{x:1.48*scale,z:-.55*scale+.20}};
 }

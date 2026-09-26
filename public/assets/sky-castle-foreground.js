@@ -2,7 +2,7 @@ import { createDetailView } from './sky-castle-lod.js';
 import { createHabitat } from './sky-castle-habitat.js';
 
 /** Grounded details for the foreground lookout, shared by every art direction. */
-export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale=1}={}) {
+export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale=1,viewingPoint={x:1.48*landScale,z:-.55*landScale+.20}}={}) {
   const group = new THREE.Group();
   group.name = 'lookout-garden';
   ledge.updateMatrixWorld(true);
@@ -91,10 +91,11 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
   // edges and occasional embedded stones read as use, not an evenly spaced
   // ornamental necklace across an otherwise unbroken lawn.
   const path = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-15, 0, 11.15), new THREE.Vector3(-12, 0, 11.5),
-    new THREE.Vector3(-9.2, 0, 10.15), new THREE.Vector3(-6.7, 0, 10.5),
+    new THREE.Vector3(-7, 0, .65), new THREE.Vector3(-4, 0, .8),
+    new THREE.Vector3(-1.2, 0, -.35), new THREE.Vector3(.3, 0, -.25),
+    new THREE.Vector3(viewingPoint.x/landScale, 0, viewingPoint.z/landScale),
   ]);
-  for(const point of path.points){point.x*=landScale;point.z*=landScale;}
+  for(const point of path.points){point.x=ledge.position.x+point.x*landScale;point.z=ledge.position.z+point.z*landScale;}
   path.updateArcLengths();
   const trailPoints=path.getSpacedPoints(Math.ceil(path.getLength()/.45));
   function trailDistance(x,z){
@@ -195,6 +196,38 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
     for(let j=0;j<2;j++)leaves.push({x:x+(j?1:-1)*.027,y:y+h*.45,z,
       scale:[.042,.008,.018],rotation:[0,angle,j?.45:-.45]});
   }
+  // The viewing clearing stays open, but a few low plants at the worn path's
+  // shoulders give the nearby camera a physical scale cue. Their dimensions
+  // are in metres, independent of the size of the floating landform.
+  const viewingX=ledge.position.x+viewingPoint.x,viewingZ=ledge.position.z+viewingPoint.z;
+  const viewingClover=[],tufts=[];
+  for(const [dx,dz,radius] of [[-1.2,-.06,.30],[7.2,3.3,1.1]]){
+    const cx=viewingX+dx,cz=viewingZ+dz;
+    if(!contains(cx,cz,radius))continue;
+    for(let i=0;i<(radius<.5?26:42);i++){
+      const a=random()*Math.PI*2,r=radius*Math.sqrt(random()),x=cx+Math.cos(a)*r,z=cz+Math.sin(a)*r;
+      if(!contains(x,z,.12)||trailDistance(x,z)<.26)continue;
+      const size=.75+random()*.5;
+      tufts.push({x,y:groundHeight(x,z)-.008,z,scale:[size,size,size],rotation:[0,random()*Math.PI*2,0]});
+      if(i%3===0)viewingClover.push([x,z]);
+    }
+  }
+  const bladePositions=[],bladeUvs=[],bladeIndices=[];
+  for(let blade=0;blade<7;blade++){
+    const angle=blade*2.399,dx=Math.cos(angle),dz=Math.sin(angle),h=.075+random()*.065,lean=.035+random()*.045;
+    const start=bladePositions.length/3;
+    for(let row=0;row<=4;row++){
+      const t=row/4,width=.014*(1-t)**.7;
+      for(const side of [-1,0,1]){
+        const x=dx*(.028+lean*t*t)-dz*side*width,z=dz*(.028+lean*t*t)+dx*side*width;
+        bladePositions.push(x,h*t+Math.sin(t*Math.PI)*.012*(side===0?1:0),z);bladeUvs.push(t,(side+1)/2);
+      }
+      if(row<4)for(let col=0;col<2;col++){const a=start+row*3+col;bladeIndices.push(a,a+1,a+3,a+1,a+4,a+3);}
+    }
+  }
+  const tuftGeometry=new THREE.BufferGeometry();tuftGeometry.setAttribute('position',new THREE.Float32BufferAttribute(bladePositions,3));
+  tuftGeometry.setAttribute('uv',new THREE.Float32BufferAttribute(bladeUvs,2));tuftGeometry.setIndex(bladeIndices);tuftGeometry.computeVertexNormals();
+  instances(tuftGeometry,materials.grass,tufts,'fine');
   // Distant shrubs have an uneven low crown. Nearby foliage replaces that
   // volume with folded leaves and branches instead of decorating a smooth ball.
   const shrubCrown=new THREE.SphereGeometry(1,9,6),crownVertices=shrubCrown.attributes.position;
@@ -234,6 +267,12 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
     const quaternion=new THREE.Quaternion().setFromUnitVectors(up,b.clone().sub(a).normalize());
     const rotation=new THREE.Euler().setFromQuaternion(quaternion);
     fernStems.push({x:middle.x,y:middle.y,z:middle.z,scale:[.004,length,.004],rotation:[rotation.x,rotation.y,rotation.z]});
+  }
+  for(const [x,z] of viewingClover){
+    const y=groundHeight(x,z),angle=random()*Math.PI*2;
+    stemBetween(new THREE.Vector3(x,y,z),new THREE.Vector3(x,y+.045,z));
+    for(let leaf=0;leaf<3;leaf++)fineLeaves.push({x,y:y+.045,z,
+      scale:[.048,.025,.073],rotation:[0,angle+leaf*Math.PI*2/3,-.12]});
   }
   const fernCenters=patches.filter((_,i)=>i%2===0).map(([x,z])=>[x,z]);
   for(const [cx,cz] of fernCenters){
@@ -289,7 +328,7 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
   }
   let detailShadowRevision=0;
   const stats={patches:patches.length,shrubs:shrubs.length,flowers:hearts.length,fineLeaves:fineLeaves.length,
-    flowerDrifts:flowerPatches.length,rockOutcrops:rockPatches.length,rocks:rocks.length,shadowRevision:0};
+    flowerDrifts:flowerPatches.length,rockOutcrops:rockPatches.length,rocks:rocks.length,viewingTufts:tufts.length,shadowRevision:0};
   function updateDetail(camera,visibleWidth){
     group.updateWorldMatrix(true,true);detailView.prepare(camera,visibleWidth);
     for(const chunk of lodChunks.values()){
