@@ -1,3 +1,4 @@
+import { createDetailView } from './sky-castle-lod.js';
 /**
  * Fine botanical geometry for the floating island.
  *
@@ -320,25 +321,23 @@ export function buildBotany(THREE, materials, terrain) {
     grassBlades:tallRoots.length * 5 + fineRoots.length * 4, ferns:fernRoots.length,
     cloverPlants:cloverRoots.length, reeds:reedRoots.length, detailMode:'overview',
     trailProtected:true, bridgeProtected:true };
-  const frustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4();
-  let lastWidth = worldScale > 1 ? 280 : 28;
-  function updateDetail(camera, visibleWidth) {
-    const width = visibleWidth || (camera?.isOrthographicCamera ? (camera.right - camera.left) / camera.zoom : lastWidth);
-    lastWidth = width;
-    const close = width <= 72;
-    if (camera) {
-      camera.updateMatrixWorld(); viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-      frustum.setFromProjectionMatrix(viewProjection);
-    }
-    stats.drawCalls = stats.triangles = 0; stats.detailMode = close ? 'full' : 'overview';
+  const detailView=createDetailView(THREE);
+  const defaultWidth=worldScale>1?280:28;
+  function updateDetail(camera, visibleWidth=defaultWidth) {
+    group.updateWorldMatrix(true,true);detailView.prepare(camera,visibleWidth);
+    stats.drawCalls=stats.triangles=0;
+    let closeChunks=0,farChunks=0;
     for (const chunk of chunks.values()) {
-      const visible = !camera || frustum.intersectsBox(chunk.bounds);
-      chunk.high.visible = visible && close; chunk.low.visible = visible && !close;
-      if (visible) {
-        stats.drawCalls += (close ? chunk.high : chunk.low).children.length;
-        stats.triangles += close ? chunk.highTriangles : chunk.lowTriangles;
+      const visible=detailView.boxVisible(chunk.bounds,group.matrixWorld);
+      const close=detailView.boxWidth(chunk.bounds,group.matrixWorld)<=72;
+      chunk.high.visible=visible&&close;chunk.low.visible=visible&&!close;
+      if(visible){
+        if(close)closeChunks++;else farChunks++;
+        stats.drawCalls+=(close?chunk.high:chunk.low).children.length;
+        stats.triangles+=close?chunk.highTriangles:chunk.lowTriangles;
       }
     }
+    stats.detailMode=closeChunks?(farChunks?'mixed':'full'):'overview';
   }
   function animate(phase, options = {}) {
     if (options.camera) updateDetail(options.camera, options.visibleWidth);
@@ -348,7 +347,7 @@ export function buildBotany(THREE, materials, terrain) {
       for (const record of chunk.animated) fillMatrices(record.mesh, record.roots, time, record.wind, record.seedOffset);
     }
   }
-  updateDetail(null, lastWidth); animate(0);
+  updateDetail(null, defaultWidth); animate(0);
   group.userData.botany = stats;
   return { group, animate, updateDetail, stats };
 }

@@ -14,7 +14,7 @@ import { buildForegroundDetails } from './sky-castle-foreground.js';
 import { STYLES, DEFAULT_STYLE } from './castle-styles.js';
 
 const W = 960, H = 600, DURATION = 60;
-const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE, HALF_WIDTH=14*LAND_SCALE;
+const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE;
 const groveControllers=[];
 const travelerControllers=[];
 const sunOffset=new THREE.Vector3(14*LAND_SCALE,17*LAND_SCALE,19*LAND_SCALE);
@@ -37,7 +37,7 @@ sceneContainer.appendChild(renderer.domElement);
 renderer.domElement.style.visibility='hidden';
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xb4dce4, 40*LAND_SCALE, 90*LAND_SCALE);
-const camera = new THREE.OrthographicCamera(-HALF_WIDTH,HALF_WIDTH,HALF_WIDTH*H/W,-HALF_WIDTH*H/W,.1,180*LAND_SCALE);
+const camera = new THREE.PerspectiveCamera(30,W/H,1,180*LAND_SCALE);
 const palette = createMaterials(THREE), m = palette.materials;
 palette.setWorldScale(LAND_SCALE,HEIGHT_SCALE);
 const meadowReady=palette.loadMeadowTexture(new URL('./meadow-paint-v1.png',import.meta.url).href);
@@ -91,6 +91,7 @@ for(let i=0;i<3;i++){const ring=new THREE.Mesh(new THREE.TorusGeometry(.37,.018,
 function traveler(x,z,scale,groundY=null) {
  const controller=buildTraveler(THREE,m,{seed:travelerControllers.length+1,companion:travelerControllers.length%2===1});
  controller.group.scale.setScalar(scale);controller.group.position.set(x,groundY??terrain.height(x,z),z);
+ controller.group.rotation.y=Math.atan2(x-terrain.castleAnchor.x,z-terrain.castleAnchor.z);
  travelerControllers.push(controller);scene.add(controller.group);
 }
 traveler(-.85*LAND_SCALE,2.8*LAND_SCALE,1);traveler(-.56*LAND_SCALE,2.87*LAND_SCALE,.72);
@@ -138,12 +139,13 @@ for(const [upper,material,vertical] of [[true,foregroundGrass,.65*HEIGHT_SCALE],
 }scene.add(ledge);
 const foreground = buildForegroundDetails(THREE,m,ledge,{scale:LAND_SCALE}); scene.add(foreground.group);
 for(const [i,x,z,height] of [[0,-11.0,10.7,1.25],[1,-10.2,11.1,.9],[2,-9.6,10.5,1.4],[3,-8.7,11.3,1.05]]){const tree=buildTree(THREE,m,{height,kind:'broadleaf',seed:79+i});tree.position.set(x*LAND_SCALE,foreground.groundHeight(x*LAND_SCALE,z*LAND_SCALE)-.025,z*LAND_SCALE);scene.add(tree);}
-traveler(-6.9*LAND_SCALE,10.45*LAND_SCALE,1.5,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE));traveler(-6.45*LAND_SCALE,10.46*LAND_SCALE,1.0,foreground.groundHeight(-6.45*LAND_SCALE,10.46*LAND_SCALE));
+traveler(-6.9*LAND_SCALE,10.45*LAND_SCALE,1.5,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE));traveler(-6.73*LAND_SCALE,10.46*LAND_SCALE,1.0,foreground.groundHeight(-6.73*LAND_SCALE,10.46*LAND_SCALE));
 const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-1000,
  height:(x,z)=>foreground.groundHeight(x+ledge.position.x,z+ledge.position.z)-ledge.position.y,
+ trailDistance:(x,z)=>foreground.trailDistance(x+ledge.position.x,z+ledge.position.z),
  radius:a=>LAND_SCALE/Math.hypot(Math.cos(a)/9.2,Math.sin(a)/2.3),
  contains:(x,z,margin=0)=>foreground.contains(x+ledge.position.x,z+ledge.position.z,margin)};
-const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'satellite',reservedPositions:[[11,-.5,3],[15.5,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
+const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'satellite',reservedPositions:[[11,-.5,3],[12.7,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
 
 // A quiet name is assembled from actual slender stone strokes and raycast
 // onto the cliff. There is no rectangular sign or image masquerading as text.
@@ -194,11 +196,14 @@ const mists=[];for(let i=0;i<12;i++){const mist=new THREE.Sprite(mistMaterial);m
 const target=new THREE.WebGLRenderTarget(renderWidth,renderHeight,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
 target.depthTexture=new THREE.DepthTexture(renderWidth,renderHeight);target.depthTexture.type=THREE.UnsignedIntType;
 target.samples = 4;
-const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},resolution:{value:new THREE.Vector2(renderWidth,renderHeight)},pixelRatio:{value:renderScale},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0}};
+const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},resolution:{value:new THREE.Vector2(renderWidth,renderHeight)},pixelRatio:{value:renderScale},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0},cameraNear:{value:camera.near},cameraFar:{value:camera.far}};
 const postMaterial=new THREE.ShaderMaterial({depthTest:false,depthWrite:false,uniforms:postUniforms,
  vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
- fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper,pixelRatio;
- void main(){vec2 uv=vUv;vec2 px=pixelRatio/resolution;vec3 c=texture2D(colorMap,uv).rgb;float d=texture2D(depthMap,uv).r;float edge=0.;edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(0.,px.y)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(0.,px.y)).r));c=mix(c,inkColor,smoothstep(.0005,.008,edge)*ink);float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
+ fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper,pixelRatio,cameraNear,cameraFar;
+ // Convert the perspective depth buffer to normalized view-space distance
+ // before detecting contours; raw perspective depth loses detail at this scale.
+ float depthAt(vec2 uv){float raw=texture2D(depthMap,uv).r;return cameraNear/(cameraFar-(cameraFar-cameraNear)*raw);}
+ void main(){vec2 uv=vUv;vec2 px=pixelRatio/resolution;vec3 c=texture2D(colorMap,uv).rgb;float d=depthAt(uv);float edge=0.;edge=max(edge,abs(d-depthAt(uv+vec2(px.x,0.))));edge=max(edge,abs(d-depthAt(uv-vec2(px.x,0.))));edge=max(edge,abs(d-depthAt(uv+vec2(0.,px.y))));edge=max(edge,abs(d-depthAt(uv-vec2(0.,px.y))));c=mix(c,inkColor,smoothstep(.0005,.008,edge)*ink);float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
  #include <colorspace_fragment>
  }`});
 const postScene=new THREE.Scene(),postCamera=new THREE.Camera();postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMaterial));
@@ -223,10 +228,13 @@ for(const [id,preset] of Object.entries(STYLES)){const button=document.createEle
 let preferred=params.get('style');if(!preferred&&!capture){try{preferred=localStorage.getItem('castle-3d-style');}catch{}}
 window.setStyle(Object.hasOwn(STYLES,preferred)?preferred:DEFAULT_STYLE,{persist:false});
 const focus=new THREE.Vector3(),cameraRight=new THREE.Vector3(),cameraUp=new THREE.Vector3(),cameraDirection=new THREE.Vector3();
-let shadowZoom=-1,groveShadowRevision=-1;const shadowFocus=new THREE.Vector3(Infinity,Infinity,Infinity);
+let shadowZoom=-1,detailShadowRevision=-1;const shadowFocus=new THREE.Vector3(Infinity,Infinity,Infinity);
 let azimuthOffset=.24,elevation=.37,zoom=1,elapsed=0,last=performance.now(),paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
 window.animationConfig={duration:DURATION,fps:12};
-try{await Promise.all([atmosphere.ready,meadowReady,rockReady]);}catch(error){
+try{
+ const [skyTexture]=await Promise.all([atmosphere.ready,meadowReady,rockReady]);
+ palette.setSkyTexture(skyTexture);
+}catch(error){
  document.getElementById('loading').textContent='The painted textures could not load. Reload to try again.';
  throw error;
 }
@@ -236,14 +244,15 @@ window.renderFrame=phase=>{
  // meet the camera at exactly the same seamless loop boundary.
  palette.animate(cycle*8);atmosphere.animate(cycle);
  window.castleState.phase=cycle;
- const angle=t+azimuthOffset;camera.position.set(Math.sin(angle)*32*LAND_SCALE,Math.sin(elevation)*32*LAND_SCALE+1,Math.cos(angle)*32*LAND_SCALE).add(focus);camera.zoom=zoom;camera.updateProjectionMatrix();camera.lookAt(focus);camera.updateMatrixWorld(true);
- const visibleWidth=HALF_WIDTH*2/zoom;
+ const angle=t+azimuthOffset;camera.position.set(Math.sin(angle)*32*LAND_SCALE/zoom,(Math.sin(elevation)*32*LAND_SCALE+1)/zoom,Math.cos(angle)*32*LAND_SCALE/zoom).add(focus);camera.updateProjectionMatrix();camera.lookAt(focus);camera.updateMatrixWorld(true);
+ const visibleWidth=2*camera.position.distanceTo(focus)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.aspect;
  terrain.updateDetail?.(camera,visibleWidth);landscapeDetails.updateDetail?.(camera,visibleWidth);botany.updateDetail?.(camera,visibleWidth);foreground.updateDetail(camera,visibleWidth);
  for(const controller of groveControllers)controller.updateDetail(camera,visibleWidth);
  landscapeDetails.animate(cycle);botany.animate(cycle);
  for(const controller of travelerControllers)controller.animate(cycle);
- const nextShadowRevision=groveControllers.reduce((sum,controller)=>sum+controller.stats.shadowRevision,0);
- if(nextShadowRevision!==groveShadowRevision){renderer.shadowMap.needsUpdate=true;groveShadowRevision=nextShadowRevision;}
+ const nextShadowRevision=groveControllers.reduce((sum,controller)=>sum+controller.stats.shadowRevision,0)
+   +(terrain.detailStats.shadowRevision||0)+(foreground.stats.shadowRevision||0)+(landscapeDetails.stats.shadowRevision||0);
+ if(nextShadowRevision!==detailShadowRevision){renderer.shadowMap.needsUpdate=true;detailShadowRevision=nextShadowRevision;}
  if(zoom!==shadowZoom||!focus.equals(shadowFocus)){
   sunlight.position.copy(sunOffset).add(focus);sunlight.target.position.copy(focus);
   const span=Math.max(18,18*LAND_SCALE/zoom);Object.assign(sunlight.shadow.camera,{left:-span,right:span,top:span,bottom:-span});sunlight.shadow.camera.updateProjectionMatrix();
@@ -262,7 +271,7 @@ function selectView(id){
  azimuthOffset=.24;elevation=.37;elapsed=0;
  if(id==='castle'){focus.copy(terrain.castleAnchor);focus.y+=1.1;zoom=12;elevation=.43;}
  else if(id==='lake'){focus.set(1.5*LAND_SCALE,terrain.waterLevel,1.9*LAND_SCALE);zoom=7;elevation=.48;}
- else if(id==='lookout'){focus.set(-6.9*LAND_SCALE,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE)+.4,10.45*LAND_SCALE);zoom=12;elevation=.28;}
+ else if(id==='lookout'){focus.set(-6.9*LAND_SCALE,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE)+.4,10.45*LAND_SCALE);zoom=12;elevation=.35;azimuthOffset=.44;}
  else{focus.set(0,0,0);zoom=1;id='overview';}
  window.castleState.view=id;document.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===id)));
  if(id!=='overview'){paused=true;updatePause();}window.renderFrame(0);
@@ -272,7 +281,7 @@ document.getElementById('reset-view').addEventListener('click',()=>selectView('o
 document.querySelectorAll('[data-view]').forEach(button=>button.addEventListener('click',()=>selectView(button.dataset.view)));
 function pan(dx,dy){
  camera.getWorldDirection(cameraDirection);cameraRight.crossVectors(cameraDirection,camera.up).normalize();cameraUp.crossVectors(cameraRight,cameraDirection).normalize();
- const units=HALF_WIDTH*2/zoom/renderer.domElement.clientWidth;focus.addScaledVector(cameraRight,-dx*units).addScaledVector(cameraUp,dy*units);
+ const units=2*camera.position.distanceTo(focus)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.aspect/renderer.domElement.clientWidth;focus.addScaledVector(cameraRight,-dx*units).addScaledVector(cameraUp,dy*units);
  window.castleState.view='custom';document.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed','false'));
 }
 function changeZoom(factor){zoom=Math.max(.65,Math.min(16,zoom*factor));window.renderFrame(elapsed/(DURATION*1000));}

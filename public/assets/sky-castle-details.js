@@ -1,3 +1,4 @@
+import { createDetailView } from './sky-castle-lod.js';
 /**
  * Small, grounded landscape stories for the shared 3D island.
  *
@@ -414,26 +415,27 @@ export function buildLandscapeDetails(THREE, materials, terrain) {
     overviewTriangles:staticTriangles + gardenLowTriangles, gardenChunks:gardenChunks.size,
     bridge:true, bridgeArches:archCount, bridgeSpan:bridgeHalfSpan * 2,
     shoreStones:shoreStoneCount, gardens:gardenCount, ivyLeaves:ivyLeafCount, lilyLeaves:pads.length };
-  const frustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4();
-  let lastWidth = worldScale > 1 ? 280 : 28;
-  function updateDetail(camera, visibleWidth) {
-    const width = visibleWidth || (camera?.isOrthographicCamera ? (camera.right - camera.left) / camera.zoom : lastWidth);
-    lastWidth = width;
-    if (camera) { camera.updateMatrixWorld(); viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); frustum.setFromProjectionMatrix(viewProjection); }
-    const near = width <= 66;
-    lilies.visible = width <= 140;
-    stats.drawCalls = staticGroup.children.length + (lilies.visible ? 1 : 0);
-    stats.triangles = staticTriangles + (lilies.visible ? lilyTriangles : 0);
-    for (const chunk of gardenChunks.values()) {
-      const visible = !camera || frustum.intersectsBox(chunk.bounds);
-      chunk.high.visible = visible && near; chunk.low.visible = visible && !near;
-      if (visible) {
-        stats.drawCalls += (near ? chunk.high : chunk.low).children.length;
-        stats.triangles += near ? chunk.highTriangles : chunk.lowTriangles;
+  const detailView=createDetailView(THREE);
+  const defaultWidth=worldScale>1?280:28;
+  let detailShadowRevision=0;
+  function updateDetail(camera, visibleWidth=defaultWidth) {
+    group.updateWorldMatrix(true,true);detailView.prepare(camera,visibleWidth);
+    const lilyVisible=detailView.meshVisible(lilies)&&detailView.meshWidth(lilies)<=140;
+    if(lilyVisible!==lilies.visible)detailShadowRevision++;
+    lilies.visible=lilyVisible;stats.shadowRevision=detailShadowRevision;
+    stats.drawCalls=staticGroup.children.length+(lilies.visible?1:0);
+    stats.triangles=staticTriangles+(lilies.visible?lilyTriangles:0);
+    for(const chunk of gardenChunks.values()){
+      const visible=detailView.boxVisible(chunk.bounds,group.matrixWorld);
+      const near=detailView.boxWidth(chunk.bounds,group.matrixWorld)<=66;
+      chunk.high.visible=visible&&near;chunk.low.visible=visible&&!near;
+      if(visible){
+        stats.drawCalls+=(near?chunk.high:chunk.low).children.length;
+        stats.triangles+=near?chunk.highTriangles:chunk.lowTriangles;
       }
     }
   }
-  updateDetail(null, lastWidth);
+  updateDetail(null, defaultWidth);
   group.userData.landscapeDetails = stats;
   return { group, animate, updateDetail, stats };
 }

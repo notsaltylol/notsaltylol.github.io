@@ -3,8 +3,9 @@
  *
  * Opaque surfaces retain Three.js' normal, light and shadow calculations. The
  * shader then compresses the diffuse illumination into art-directed bands and
- * adds broad pigment variation plus optional world-mapped painted textures. There are no painted billboards
- * standing in for the island, no reflection maps and no photoreal specular layer.
+ * adds broad pigment variation plus optional world-mapped painted textures.
+ * Water borrows softly filtered sky color; the island remains actual geometry,
+ * with no photoreal specular layer.
  *
  * Call setStyle(id) without rebuilding geometry. Call animate(normalizedPhase)
  * with a value from 0 to 1; every animated term has an integer period, so both
@@ -235,7 +236,7 @@ export function createMaterials(THREE) {
     });
     material.name = `painted-${key}`;
     material.userData.castleSurface = key;
-    const surface = key === 'rock' ? 1 : key === 'grass' ? 2 : key === 'cloud' ? 3 : key === 'leafDetail' ? 4 : key === 'leaf' ? 5 : 0;
+    const surface = key === 'rock' ? 1 : key === 'grass' ? 2 : key === 'cloud' ? 3 : key === 'leafDetail' ? 4 : key === 'leaf' ? 5 : key === 'stone' ? 6 : key === 'stoneLight' ? 7 : 0;
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, shared, { uPaintSurface:{ value:surface } });
       shader.vertexShader = shader.vertexShader
@@ -324,10 +325,25 @@ export function createMaterials(THREE) {
               pigment *= 0.52;
             }
           }
-          if (uPaintSurface > 4.5) {
+          if (uPaintSurface > 4.5 && uPaintSurface < 5.5) {
             // Foliage keeps a quiet crown mass. Its geometry and cast shadows
             // supply the leaves; a grass texture must not stipple the canopy.
             pigment = (broadPigment - 0.5) * 0.10;
+          }
+          if (uPaintSurface > 5.5) {
+            // Mineral washes and occasional vertical rain traces soften clean
+            // masonry without drawing a second, conflicting grid of bricks.
+            vec3 masonryPosition = vPaintWorldPosition;
+            float mineralWash = paintNoise(masonryPosition * vec3(0.58, 0.31, 0.58) + vec3(4.7, 1.8, 8.2));
+            float rainWash = paintNoise(masonryPosition * vec3(1.35, 0.12, 1.35) + vec3(9.3, 4.1, 2.7));
+            float mineralCloud = paintNoise(masonryPosition * vec3(2.4, 1.7, 2.4) + vec3(3.1, 7.3, 1.9));
+            float upright = 1.0 - abs(normalize(vPaintWorldNormal).y);
+            float weather = smoothstep(0.57, 0.79, rainWash) * upright;
+            float age = uPaintSurface > 6.5 ? 0.43 : 0.90;
+            vec3 mineralTint = mix(vec3(0.84, 0.90, 0.93), vec3(1.08, 1.025, 0.87), smoothstep(0.25, 0.74, mineralWash));
+            mineralTint = mix(mineralTint, vec3(0.83, 0.89, 0.81), weather * 0.30);
+            diffuseColor.rgb *= mix(vec3(1.0), mineralTint, age * uPaintPigment);
+            pigment = ((mineralCloud - 0.5) * 0.17 - weather * 0.065) * age;
           }
           if (uPaintSurface > 3.5 && uPaintSurface < 4.5) {
             // UVs follow an individual leaf: U base→tip, V edge→edge.
@@ -395,7 +411,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v8-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v9-${surface}`;
     materials[key] = material;
   }
 
@@ -404,6 +420,7 @@ export function createMaterials(THREE) {
     uFoam:{ value:new THREE.Color() }, uCozy:{ value:0 },
     uWaterPigment:{ value:1 },
     uWorldScale:{ value:new THREE.Vector2(1,1) },
+    uSkyTexture:{ value:whiteFallback() }, uSkyEnabled:{ value:0 }, uSkyLod:{ value:4 },
   };
   const waterVertex = /* glsl */`
     varying vec2 vWaterUv;
@@ -444,6 +461,9 @@ export function createMaterials(THREE) {
     uniform float uCozy;
     uniform float uWaterPigment;
     uniform vec2 uWorldScale;
+    uniform sampler2D uSkyTexture;
+    uniform float uSkyEnabled;
+    uniform float uSkyLod;
     #include <fog_pars_fragment>
     float waterHash(vec2 p) {
       vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -460,6 +480,36 @@ export function createMaterials(THREE) {
       const mat2 turn = mat2(0.8, 0.6, -0.6, 0.8);
       return waterNoise(p) * 0.67 + waterNoise(turn * p * 2.07 + vec2(8.3, 2.8)) * 0.33;
     }
+    float flowingField(vec2 p, float cycles, float travel) {
+      // Two overlapping traveling fields reset only when their contribution is
+      // zero. This gives continuous downward flow and identical loop endpoints.
+      float first = fract(uPhase * cycles), second = fract(first + 0.5);
+      float blend = 0.5 + 0.5 * cos(first * 6.28318530718);
+      float a = waterNoise(p + vec2(0.0, first * travel));
+      float b = waterNoise(p + vec2(0.0, second * travel));
+      return mix(a, b, blend);
+    }
+    vec3 reflectedSky(vec2 current, vec2 bend, vec2 drift) {
+      vec3 worldView = normalize((vec4(normalize(vWaterView), 0.0) * viewMatrix).xyz);
+      vec2 slope = vec2(waterField(current * 0.82 + drift * 0.12),
+        waterField(current * 0.76 + vec2(6.8, 3.2) - drift * 0.10)) - 0.5;
+      // A shallow slope keeps broad cloud light recognizable; strong warping
+      // turns a quiet lake into marbled glass at this orthographic scale.
+      vec3 reflected = reflect(-worldView, normalize(vec3(slope.x * 0.065, 1.0, slope.y * 0.065)));
+      vec2 skyUv = vec2((atan(reflected.x, -reflected.z) + 0.24) / 6.28318530718 + 0.5,
+        clamp(0.58 - (asin(clamp(reflected.y, -1.0, 1.0)) - 0.36) * 0.96, 0.08, 0.92));
+      skyUv += vec2(current.x * 0.028, current.y * 0.040) + bend * 0.004;
+      vec3 sky = textureLod(uSkyTexture, skyUv, uSkyLod).rgb;
+      float wrapped = fract(skyUv.x);
+      float seamBlend = (1.0 - smoothstep(0.0, 0.045, min(wrapped, 1.0 - wrapped))) * 0.5;
+      sky = mix(sky, textureLod(uSkyTexture, vec2(1.0 - wrapped, skyUv.y), uSkyLod).rgb, seamBlend);
+      float luminance = dot(sky, vec3(0.2126, 0.7152, 0.0722));
+      // Only soft painted light and a little relative sky hue enter the water.
+      // Palette colors remain the basis, including muted ink and cozy styles.
+      vec3 light = mix(uWater * vec3(0.73, 0.95, 1.08), uFoam, smoothstep(0.18, 0.78, luminance));
+      vec3 chroma = clamp(sky / max(luminance, 0.08), vec3(0.76), vec3(1.28));
+      return light * mix(vec3(1.0), chroma, uWaterPigment * 0.18);
+    }
     void main() {
       vec2 uv = vWaterUv;
       float t = uPhase * 6.28318530718;
@@ -467,20 +517,31 @@ export function createMaterials(THREE) {
       vec3 color;
       float alpha;
       if (uFall > 0.5) {
-        // Flow ribbons vary in thickness and brightness. Their broad optical
-        // body stays readable after the narrow ribbons become subpixel.
-        vec2 fallP = vec2(uv.x * uWorldScale.x, uv.y * uWorldScale.y);
-        float lane = waterNoise(vec2(fallP.x * 13.0, fallP.y * 0.25) + drift * 0.13);
-        float ribbonPhase = fallP.x * 61.0 + lane * 3.8 + sin(fallP.y * 8.0 - t * 2.0) * 0.24;
-        float resolved = 1.0 - smoothstep(1.0, 3.0, fwidth(ribbonPhase));
-        float pulse = sin(fallP.y * 67.0 + t * 8.0 + lane * 8.0);
-        float foam = mix(0.06, smoothstep(0.68, 1.0, sin(ribbonPhase)) * (0.25 + 0.11 * pulse), resolved);
-        foam += pow(uv.y, 12.0) * 0.27 + pow(1.0 - uv.y, 7.0) * 0.13;
-        float body = waterNoise(vec2(uv.x * 7.0, uv.y * 1.4) + drift * 0.12);
-        color = mix(uWater * vec3(0.82, 0.98, 1.04), uFoam, clamp(0.18 + body * 0.18 + foam, 0.0, 1.0));
-        float edge = smoothstep(0.0, 0.055, uv.x) * smoothstep(0.0, 0.055, 1.0 - uv.x);
-        float foot = smoothstep(0.0, 0.12, uv.y);
-        alpha = edge * foot * (0.66 + body * 0.12 + foam * 0.22);
+        // Broad uneven lanes establish the visible falling sheet at a distance.
+        // The narrower moving ribbons appear only while their pixels resolve.
+        vec2 fallP = vec2(uv.x * 0.89 * uWorldScale.x, uv.y * 7.4 * uWorldScale.y);
+        float longLanes = waterField(vec2(fallP.x * 0.60, fallP.y * 0.025) + vec2(2.4, 5.7));
+        float falling = flowingField(vec2(fallP.x * 1.8, fallP.y * 0.16), 2.0, 4.2);
+        float broadRibbon = smoothstep(0.32, 0.76, longLanes * 0.56 + falling * 0.44);
+        vec2 fineP = vec2(fallP.x * 4.8, fallP.y * 0.54);
+        float fineWidth = max(length(dFdx(fineP)), length(dFdy(fineP)));
+        float fineResolve = 1.0 - smoothstep(0.65, 1.55, fineWidth);
+        float fineFlow = flowingField(fineP + vec2(longLanes, 0.0), 3.0, 7.3);
+        float threadFoam = smoothstep(0.51, 0.73, fineFlow) * fineResolve;
+        float crest = pow(uv.y, 19.0) * (0.20 + broadRibbon * 0.16);
+        float foam = broadRibbon * 0.43 + threadFoam * 0.19 + crest;
+        color = mix(uWater * vec3(0.66, 0.95, 1.10), uFoam, clamp(0.20 + foam, 0.0, 0.91));
+        float breakup = 1.0 - smoothstep(0.68, 0.97, uv.y);
+        float leftDrift = flowingField(vec2(fallP.y * 0.075, 3.2), 1.0, 2.8);
+        float rightDrift = flowingField(vec2(fallP.y * 0.069, 8.9), 1.0, 3.7);
+        float leftEdge = 0.004 + breakup * (0.012 + leftDrift * 0.037);
+        float rightEdge = 0.996 - breakup * (0.012 + rightDrift * 0.034);
+        float edge = smoothstep(leftEdge, leftEdge + 0.024, uv.x)
+          * (1.0 - smoothstep(rightEdge - 0.024, rightEdge, uv.x));
+        float frayedEdge = (1.0 - smoothstep(0.055, 0.15, min(uv.x, 1.0 - uv.x))) * breakup;
+        float air = mix(1.0, 0.45 + fineFlow * 0.55, frayedEdge * fineResolve);
+        float foot = smoothstep(0.0, 0.15, uv.y);
+        alpha = edge * air * foot * (0.43 + broadRibbon * 0.36 + threadFoam * 0.11);
       } else {
         vec2 p = vWaterPosition.xz;
         vec2 region = p / max(uWorldScale.x, 1.0);
@@ -492,15 +553,18 @@ export function createMaterials(THREE) {
         vec2 current = region + bend * 1.15;
         float pool = waterField(current * 0.71 + drift * 0.14);
         float skyWash = waterField(current * vec2(0.52, 1.12) + vec2(2.4, 7.1) + drift * 0.18);
-        vec3 deepColor = uWater * vec3(0.61, 0.80, 0.96);
-        vec3 shallowColor = mix(uWater * vec3(0.92, 1.13, 0.96), uFoam, 0.20);
+        vec3 deepColor = uWater * vec3(0.49, 0.71, 0.94);
+        vec3 shallowColor = mix(uWater * vec3(0.94, 1.22, 0.81), uFoam, 0.14);
         color = mix(shallowColor, deepColor, deep);
         color *= 0.91 + pool * 0.19;
         float fresnel = pow(1.0 - abs(dot(normalize(vWaterNormal), normalize(vWaterView))), 3.0);
         // Broad reflected sky washes are irregular and sparse, not a second
         // periodic wave grid. The base remains translucent colored water.
-        float reflection = smoothstep(0.34, 0.74, skyWash) * (0.12 + fresnel * 0.20);
-        color = mix(color, uFoam, reflection * mix(0.65, 1.0, uWaterPigment));
+        float reflection = smoothstep(0.29, 0.72, skyWash) * (0.17 + fresnel * 0.25);
+        if (uSkyEnabled > 0.5) {
+          vec3 skyReflection = reflectedSky(current, bend, drift);
+          color = mix(color, skyReflection, (0.22 + reflection) * mix(0.72, 1.0, uWaterPigment));
+        } else color = mix(color, uFoam, reflection * mix(0.65, 1.0, uWaterPigment));
         // Two stretched noise fields form broken, gently curved wind marks.
         // Derivatives suppress them before they alias into diagonal dot rows.
         vec2 rippleP = vec2(p.x * 0.57 + p.y * 0.07, p.y * 2.25);
@@ -514,8 +578,11 @@ export function createMaterials(THREE) {
         // Its drifting phase is circular, preserving both animation endpoints.
         float broken = smoothstep(0.48, 0.70, waterNoise(vec2(p.x * 1.48, p.y * 0.84)
           + bend + drift * 0.20 + vec2(11.3, 5.7)));
-        float glint = ridge * windPatch * broken * resolve * 0.072 * mix(0.5, 1.0, uWaterPigment);
-        color = mix(color, uFoam, glint + shore * 0.055);
+        float glint = ridge * windPatch * broken * resolve * 0.052 * mix(0.5, 1.0, uWaterPigment);
+        float shoreWidth = max(fwidth(depth), 0.003);
+        float shoreFoam = (1.0 - smoothstep(0.009, 0.036 + shoreWidth, abs(depth - 0.018)))
+          * smoothstep(0.43, 0.72, waterField(p * 0.48 + drift * 0.17));
+        color = mix(color, uFoam, glint + shore * 0.035 + shoreFoam * 0.13);
         alpha = mix(0.78, 0.96, deep);
       }
       color = mix(color, mix(uWater, uFoam, 0.2), uCozy * 0.24);
@@ -602,6 +669,15 @@ export function createMaterials(THREE) {
   const loadMeadowTexture = url => loadPaintTexture(url, 'Meadow');
   const loadRockTexture = url => loadPaintTexture(url, 'Rock');
 
+  /** Borrow the atmosphere's loaded panorama. Its owner retains disposal. */
+  function setSkyTexture(texture) {
+    if (!texture?.isTexture) throw new TypeError('setSkyTexture expects a THREE.Texture');
+    waterUniforms.uSkyTexture.value = texture;
+    waterUniforms.uSkyEnabled.value = 1;
+    const width = texture.image?.width || 2048;
+    waterUniforms.uSkyLod.value = Math.max(2, Math.log2(width / 80));
+  }
+
   function animate(phase) {
     // Keep exact integer endpoints identical, including negative phases.
     waterUniforms.uPhase.value = ((phase % 1) + 1) % 1;
@@ -610,5 +686,5 @@ export function createMaterials(THREE) {
     waterUniforms.uWorldScale.value.set(horizontal,vertical);
   }
   setStyle('fantasy');
-  return { materials, setStyle, animate, setWorldScale, loadMeadowTexture, loadRockTexture, styleInfo };
+  return { materials, setStyle, animate, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
 }

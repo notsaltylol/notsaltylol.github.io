@@ -80,61 +80,71 @@ const clamp01 = x => Math.max(0, Math.min(1, x));
 const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 const angularDistance = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
-// Unequal bedding planes describe the large formation. These are deliberately
-// authored geological masses, not a low-frequency noise field: the resulting
-// silhouette has broad planar faces interrupted by faults and eroded shelves.
+// These few large fracture faces and hanging blocks define the silhouette.
+// Small fractal weathering above deliberately remains compatible with the
+// satellites and foreground; it never substitutes for the main massing.
 const fracturePlanes = [
-  [ .05,.94, .045], [.48,.90,-.022], [.89,.96, .028], [1.32,.88, .052],
-  [1.71,.95,-.018], [2.13,.91, .042], [2.58,.97,-.030], [2.96,.90, .024],
-  [3.39,.96, .041], [3.83,.89,-.027], [4.22,.95, .032], [4.70,.91, .047],
-  [5.08,.97,-.020], [5.50,.89, .037], [5.96,.95,-.029],
+  [.08,.96,.09], [.66,.86,-.08], [1.16,.97,.11], [1.82,.89,-.045],
+  [2.46,.95,.15], [3.04,.83,-.10], [3.70,.96,.055], [4.33,.87,-.12],
+  [4.98,.97,.13], [5.60,.88,-.075], [6.05,.95,.035],
 ];
 const faults = [
-  [.29,.030,.065,.16], [1.03,.040,.050,-.13], [1.93,.022,.075,.11],
-  [2.71,.046,.047,-.18], [3.57,.028,.068,.13], [4.39,.036,.056,-.10], [5.72,.025,.071,.16],
+  // angle, width, radial recession, leaning direction
+  [.74,.060,.095,-.18], [1.54,.046,.085,.12], [2.80,.072,.12,-.16],
+  [3.68,.052,.092,.17], [4.73,.065,.105,-.12], [5.75,.044,.078,.14],
 ];
-const beds = [.105,.205,.335,.475,.625,.775,.895];
+const shelves = [
+  // center angle, angular extent, depth, shelf reach, undercut, bed tilt
+  [.24,.80,.18,.048,.064,-.042], [2.28,.71,.30,.062,.072,.035],
+  [3.87,.64,.22,.072,.085,-.029], [5.10,.74,.43,.051,.069,.036],
+  [.96,.43,.56,.037,.060,.023],
+];
 const hangingMasses = [
-  // angle, angular half-width, extra reach, extra drop
-  [.42,.39,.125,1.85], [2.34,.29,.085,1.25], [3.49,.46,.135,1.60], [5.16,.32,.105,2.10],
+  // axis, half-width, radial reach, extra drop, lean, surviving block-foot width
+  [.20,.43,.235,1.50,-.14,.16], [2.02,.70,.42,2.35,.045,.61],
+  [3.23,.31,.18,.95,-.16,.14], [4.22,.64,.37,2.10,.10,.43],
+  [5.46,.30,.22,1.30,-.10,.18],
 ];
 
 /** Dimensionless macro structure; angle is periodic and depth runs rim 0–1. */
 export function cliffFormation(angle, depth) {
   let planeRadius = Infinity;
-  for (const [normal, distance, lean] of fracturePlanes) {
-    const facing = Math.cos(angle - normal);
-    if (facing <= .40) continue;
-    // Each face leans independently, so the underside splits into overlapping
-    // masses rather than repeating the same polygon at every elevation.
-    const support = distance + lean * Math.sin(depth * Math.PI * 1.45) +
-      .024 * Math.sin(normal * 3.7 + depth * 7.4) * Math.sin(depth * Math.PI);
-    planeRadius = Math.min(planeRadius, support / facing);
+  for(const [normal,distance,lean] of fracturePlanes){
+    const facing=Math.cos(angle-normal);
+    if(facing<=.35)continue;
+    const support=distance+lean*Math.sin(depth*Math.PI*.88);
+    planeRadius=Math.min(planeRadius,support/facing);
   }
-  let joints = 0;
-  for (const [angle0, width, erosion, drift] of faults) {
-    const delta = angularDistance(angle, angle0 + depth * drift);
-    joints += erosion * Math.exp(-((delta / width) ** 2));
+  let joints=0;
+  for(const [axis,width,recession,lean] of faults){
+    const d=angularDistance(angle,axis+depth*lean)/width;
+    joints+=recession*Math.exp(-d*d);
   }
-  let ledges = 0;
-  for (let i = 0; i < beds.length; i++) {
-    const tilt = .020 * Math.sin(angle * 2 + i * 1.7) + .010 * Math.cos(angle * 5 - i);
-    const d = depth - beds[i] - tilt;
-    // A short shelf top and longer concave undercut, present on only part of
-    // the circumference. No regular horizontal rings encircle the island.
-    const patch = smooth(-.45,.55,Math.sin(angle * (i % 2 ? 3 : 2) + i * 2.1));
-    const shelf = smooth(-.025,-.007,d) * (1 - smooth(.006,.027,d));
-    const undercut = smooth(.008,.031,d) * (1 - smooth(.060,.103,d));
-    ledges += patch * (shelf * .020 - undercut * .034);
+  let ledges=0;
+  for(const [axis,width,level,reach,cut,tilt] of shelves){
+    const delta=angularDistance(angle,axis),patch=1-smooth(width*.56,width,Math.abs(delta));
+    const d=depth-level-delta*tilt;
+    const shelf=smooth(-.033,-.013,d)*(1-smooth(.006,.029,d));
+    const undercut=smooth(.021,.047,d)*(1-smooth(.094,.145,d));
+    ledges+=patch*(shelf*reach-undercut*cut);
   }
-  let hangingReach = 0, hangingDrop = 0;
-  for(const [axis,width,reach,drop] of hangingMasses) {
-    const distance=Math.abs(angularDistance(angle,axis+depth*.045));
-    // A wedge profile gives fractured descending planes and a distinct apex,
-    // unlike a smooth Gaussian mound that would round each hanging mass.
-    const mass=Math.max(0,1-distance/width);
-    hangingReach+=mass*reach;
-    hangingDrop+=mass*drop;
+  let hangingReach=0,hangingDrop=0,buttress=0;
+  for(const [axis,width,reach,drop,lean,foot] of hangingMasses){
+    const distance=Math.abs(angularDistance(angle,axis+depth*lean));
+    const wedge=Math.max(0,1-distance/width);
+    // The wide western foot is a surviving bedding block, while the shorter
+    // eastern buttress tapers off axis. Their unequal widths and abrupt broken
+    // shoulders keep the lower silhouette from becoming a row of hanging cones.
+    const mass=Math.pow(Math.min(1,wedge/(1-foot)),.82);
+    // Two offset breaks interrupt the broad block with a shelf and a slight
+    // undercut. They affect its large planes, not the shared fine-rock noise.
+    const broadBlock=foot>.4?1:0;
+    const breakDepth=depth+angularDistance(angle,axis)*.10;
+    const bedStep=broadBlock*(.12*smooth(.45,.485,breakDepth)-.15*smooth(.535,.58,breakDepth)
+      +.09*smooth(.71,.75,breakDepth)-.12*smooth(.80,.835,breakDepth));
+    hangingReach=Math.max(hangingReach,mass*reach*(1+bedStep));
+    hangingDrop=Math.max(hangingDrop,mass*drop);
+    buttress=Math.max(buttress,mass);
   }
-  return { planeRadius, ledges, joints, hangingReach, hangingDrop };
+  return {planeRadius,ledges,joints,hangingReach,hangingDrop,buttress};
 }

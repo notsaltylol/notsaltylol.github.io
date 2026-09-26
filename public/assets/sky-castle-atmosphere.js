@@ -27,7 +27,9 @@ export function createAtmosphere(THREE, {
     defines:textureUrl ? {PAINTED_SKY:1} : {},
     vertexShader:/* glsl */`
       varying vec3 worldDirection;
-      void main(){worldDirection=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}
+      // Sky is infinitely distant: camera translation and dolly distance must
+      // not change the apparent cloud size or move the camera outside its dome.
+      void main(){worldDirection=position;gl_Position=projectionMatrix*vec4(mat3(viewMatrix)*position,1.0);}
     `,
     fragmentShader:/* glsl */`
       varying vec3 worldDirection;
@@ -60,15 +62,13 @@ export function createAtmosphere(THREE, {
       void main(){
         vec3 d=normalize(worldDirection);
         #ifdef PAINTED_SKY
-        // Map the art horizon to the actual downward-looking ortho view. The
-        // 360-degree longitude wraps; the zenith/nadir extend the image edges.
-        // An orthographic world would expose only a few degrees of a distant
-        // sphere. Give the sky a broad virtual lens while preserving a single
-        // unique 360-degree panorama, rather than tiling the same cloud bank.
+        // A broad virtual sky lens frames the painted horizon around the
+        // downward-looking perspective camera. Zoom moves the camera, keeping
+        // the backdrop's angular detail instead of magnifying a few texels.
         vec3 forward=-vec3(viewMatrix[0][2],viewMatrix[1][2],viewMatrix[2][2]);
-        vec3 longitudeDirection=normalize(forward+(d-forward)*7.0);
+        vec3 longitudeDirection=normalize(forward+(d-forward)*3.0);
         float u=(atan(longitudeDirection.x,-longitudeDirection.z)+.24)*panoramaRepeat/6.28318530718+.5+panoramaDrift;
-        float v=clamp(.48+(asin(clamp(d.y,-1.0,1.0))+.304692654)*2.25,.006,.994);
+        float v=clamp(.48+(asin(clamp(d.y,-1.0,1.0))+.304692654)*1.2,.006,.994);
         // Explicit continuous derivatives prevent the atan seam from selecting
         // a blurry mip level when the orbit crosses the panorama join.
         vec3 ld=longitudeDirection;

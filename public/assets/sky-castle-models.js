@@ -114,11 +114,18 @@ export function buildCastle(THREE, materials) {
   const { add, box, cylinder, lathe, tube } = work;
   work.group.name = 'Sky castle — limestone terraces and copper roofs';
 
-  // The ellipsoidal terraces belong to the architecture. The scene supplies
-  // the natural hill underneath, hiding their back edges among grass and rock.
-  add(new THREE.CylinderGeometry(1.68, 1.75, 0.15, 64), 'stone', [0, 0.075, 0], [0, 0, 0], [1, 1, 0.74], true);
-  add(new THREE.CylinderGeometry(1.46, 1.52, 0.22, 64), 'stoneLight', [0, 0.24, -0.09], [0, 0, 0], [1, 1, 0.76], true);
-  add(new THREE.CylinderGeometry(1.28, 1.35, 0.12, 64), 'stone', [0, 0.41, -0.16], [0, 0, 0], [1, 1, 0.75]);
+  // Unequal foundation courses follow the occupied rooms. Their clipped,
+  // staggered edges avoid making the keep look like a cake on circular tiers.
+  function foundation(points, bottom, height, material) {
+    const shape = new THREE.Shape();
+    points.forEach(([x,z],i) => i ? shape.lineTo(x,-z) : shape.moveTo(x,-z));
+    shape.closePath();
+    const g = new THREE.ExtrudeGeometry(shape,{depth:height,bevelEnabled:false});
+    g.rotateX(-Math.PI/2);
+    add(g, material, [0,bottom,0], [0,0,0], [1,1,1], true);
+  }
+  foundation([[-1.48,-.83],[-.73,-1.08],[.79,-1.02],[1.43,-.49],[1.42,.63],[.88,1.01],[.32,1.08],[-.51,1.12],[-1.45,.67]],0,.18,'stone');
+  foundation([[-1.25,-.78],[-.52,-.91],[.81,-.86],[1.21,-.38],[1.28,.49],[.72,.91],[-.54,.96],[-1.20,.55]],.16,.26,'stone');
   for (let i = 0; i < 7; i++) {
     box('stoneLight', 0.12, 0.026 + i * 0.035, 1.20 - i * 0.082, 0.58, 0.052, 0.17);
   }
@@ -197,11 +204,11 @@ export function buildCastle(THREE, materials) {
     // instead of uniform cylinders stacked under primitive cones.
     lathe('stone', x, base, z, [[0, 0], [radius * 1.10, 0], [radius * 1.10, 0.13], [radius, 0.19], [radius * 0.97, height * 0.48], [radius * 0.94, height - 0.15], [radius, height - 0.12], [radius, height], [0, height]]);
     masonryCourses(x, z, radius, height, base, windows);
-    for (const level of [0.17, height * 0.47, height - 0.17, height + 0.015]) {
-      cylinder('stoneLight', x, base + level, z, radius * 1.07, radius * 1.09, 0.05);
+    for (const level of [0.17, height + 0.015]) {
+      cylinder('stone', x, base + level, z, radius * 1.045, radius * 1.065, 0.045);
     }
     cylinder('stoneLight', x, top + 0.055, z, radius * 1.15, radius * 1.05, 0.08);
-    cylinder('gold', x, top + 0.105, z, radius * 1.16, radius * 1.16, 0.023);
+    cylinder('roof', x, top + 0.105, z, radius * 1.12, radius * 1.12, 0.020);
     for (let level = 0; level < 2; level++) {
       for (let i = 0; i < windows; i++) {
         const angle = i / windows * Math.PI * 2 + (level ? Math.PI / windows : 0);
@@ -247,11 +254,10 @@ export function buildCastle(THREE, materials) {
   tower({ x: 0.48, z: -0.71, radius: 0.275, height: 3.14, roof: 'spire', roofHeight: 0.73, windows: 5 });
   tower({ x: 1.05, z: 0.02, radius: 0.32, height: 2.06, roofHeight: 0.58, windows: 5 });
   tower({ x: -1.11, z: 0.21, radius: 0.27, height: 1.74, roof: 'spire', roofHeight: 0.64, windows: 5 });
-  tower({ x: 0.12, z: 0.62, radius: 0.245, height: 1.49, roofHeight: 0.45, windows: 5 });
 
   function roofedHall(x, y, z, width, height, depth) {
     box('stone', x, y + height / 2, z, width, height, depth, [0, 0, 0], true);
-    for (const level of [0.06, height * 0.51, height - 0.035]) {
+    for (const level of [0.06, height - 0.035]) {
       box('stoneLight', x, y + level, z, width + 0.045, 0.046, depth + 0.055);
     }
     const roofWidth = width + 0.12, roofDepth = depth + 0.15, rise = depth * 0.55;
@@ -346,14 +352,6 @@ export function buildCastle(THREE, materials) {
     }
   }
 
-  // Terrace paving follows the existing ellipse; fine joints add a human
-  // scale at close range without introducing one mesh per paving stone.
-  for (let i = 0; i < 31; i++) {
-    const a = i / 31 * Math.PI * 2;
-    const inner = [Math.cos(a) * 1.53, 0.153, Math.sin(a) * 1.13];
-    const outer = [Math.cos(a) * 1.685, 0.153, Math.sin(a) * 1.247];
-    tube('dark', [inner, outer], 0.0018, 1);
-  }
   for (let i = 0; i < 7; i++) {
     const y = 0.052 + i * 0.035, z = 1.235 - i * 0.082;
     box('stone', 0.12, y, z, 0.56, 0.007, 0.017);
@@ -367,25 +365,11 @@ export function buildCastle(THREE, materials) {
     for (const x of [-0.13, 0.12, 0.37]) window(x, 1.96, z, z < -0.4 ? Math.PI : 0, 0.11, 0.28);
   }
 
-  // Restrained parapets: narrow balusters and rounded coping, avoiding an
-  // oversized toy battlement pattern at the silhouette.
-  for (let i = 0; i < 17; i++) {
-    const angle = Math.PI * 0.08 + i / 16 * Math.PI * 0.84;
-    const x = Math.cos(angle) * 1.52;
-    const z = Math.sin(angle) * 1.13 - 0.10;
-    if (Math.abs(x - 0.12) < 0.27 && z > 0.90) continue;
-    cylinder('stoneLight', x, 0.42, z, 0.034, 0.046, 0.33, false, 10);
-    add(new THREE.SphereGeometry(0.052, 10, 8), 'stoneLight', [x, 0.59, z]);
-  }
-  for (const side of [-1, 1]) {
-    const points = [];
-    const start = side < 0 ? Math.PI * 0.55 : Math.PI * 0.08;
-    const end = side < 0 ? Math.PI * 0.92 : Math.PI * 0.43;
-    for (let i = 0; i <= 20; i++) {
-      const a = start + (end - start) * i / 20;
-      points.push([Math.cos(a) * 1.52, 0.59, Math.sin(a) * 1.13 - 0.10]);
-    }
-    tube('stoneLight', points, 0.035, 24);
+  // Low surviving parapet fragments leave the entry open and silhouette
+  // irregular. The former continuous pearl-like balustrade is gone.
+  for (const [x,z,width,angle] of [[-.86,.91,.68,-.12],[.91,.84,.40,.35],[-1.29,.37,.35,-.9]]) {
+    box('stone', x,.30,z,width,.20,.13,[0,angle,0]);
+    box('stoneLight',x-width*.14,.408,z,width*.57,.035,.15,[0,angle,0]);
   }
 
   // Sparse vines follow two sheltered corners, leaving the entry and the

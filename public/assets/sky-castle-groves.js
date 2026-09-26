@@ -1,3 +1,4 @@
+import { createDetailView } from './sky-castle-lod.js';
 import { buildTree as defaultBuildTree } from './sky-castle-models.js';
 
 /**
@@ -199,40 +200,46 @@ export function buildGroves(THREE, materials, terrain, {
     visibleTrees:trees.length,detailedTrees:0,activeTriangles:0,activeDrawCalls:tiles.size*2,shadowRevision:0,
     heightRange:[minHeight,maxHeight]};
   stats.activeTriangles=stats.overviewTriangles;
-  const frustum=new THREE.Frustum(),projection=new THREE.Matrix4(),worldSphere=new THREE.Sphere(),
-    treeSphere=new THREE.Sphere(),worldPoint=new THREE.Vector3(),screenPoint=new THREE.Vector3(),
-    worldScale=new THREE.Vector3(),cameraPosition=new THREE.Vector3();
-
+  const detailView=createDetailView(THREE),treeSphere=new THREE.Sphere(),
+    worldPoint=new THREE.Vector3(),screenPoint=new THREE.Vector3(),worldScale=new THREE.Vector3();
+  const candidates=[],visibleTiles=[],selected=new Set();
   function updateDetail(camera,visibleWidth) {
     if(!camera)return;
-    camera.updateMatrixWorld();group.updateWorldMatrix(true,false);
-    group.getWorldScale(worldScale);camera.getWorldPosition(cameraPosition);
+    group.updateWorldMatrix(true,false);detailView.prepare(camera,visibleWidth);
+    group.getWorldScale(worldScale);
     const maximumScale=Math.max(Math.abs(worldScale.x),Math.abs(worldScale.y),Math.abs(worldScale.z));
-    projection.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);frustum.setFromProjectionMatrix(projection);
-    const width=Number.isFinite(visibleWidth)?visibleWidth:camera.isOrthographicCamera?(camera.right-camera.left)/camera.zoom:Infinity;
-    const detailed=width<detailWidth,candidates=[],visibleTiles=[];
+    candidates.length=visibleTiles.length=0;selected.clear();
     let shadowChanged=false;
     for(const tile of tiles.values()){
-      worldSphere.copy(tile.sphere).applyMatrix4(group.matrixWorld);
-      const inView=frustum.intersectsSphere(worldSphere);
+      const inView=detailView.sphereVisible(tile.sphere,group.matrixWorld);
       if(inView!==tile.inView)shadowChanged=true;
       tile.inView=inView;
-      for(const mesh of [...tile.low,...tile.high])mesh.visible=tile.inView&&mesh.count>0;
+      for(const mesh of tile.low)mesh.visible=tile.inView&&mesh.count>0;
+      for(const mesh of tile.high)mesh.visible=tile.inView&&mesh.count>0;
       if(!tile.inView)continue;
       visibleTiles.push(tile);
-      if(!detailed)continue;
+      if(detailView.sphereWidth(tile.sphere,group.matrixWorld)>=detailWidth)continue;
       for(const tree of tile.trees){
         worldPoint.set(tree.x,tree.y+tree.height*.55,tree.z).applyMatrix4(group.matrixWorld);
         treeSphere.center.copy(worldPoint);treeSphere.radius=tree.height*.72*maximumScale;
-        if(!frustum.intersectsSphere(treeSphere))continue;
+        if(!detailView.sphereVisible(treeSphere))continue;
+        if(detailView.sphereWidth(treeSphere)>=detailWidth)continue;
         screenPoint.copy(worldPoint).project(camera);
-        // Highest screen coverage and central trees receive close detail first.
-        candidates.push({tree,priority:screenPoint.x**2+screenPoint.y**2+worldPoint.distanceTo(cameraPosition)*.0001});
+        // Projected crown area ranks the largest readable foliage first. Stable
+        // centrality/ID ties keep the selection deterministic on every orbit.
+        const radiusX=treeSphere.radius*2/detailView.widthAtPoint(worldPoint);
+        const radiusY=radiusX*Math.abs(camera.projectionMatrix.elements[5]/camera.projectionMatrix.elements[0]);
+        const coveredX=Math.max(0,Math.min(1,screenPoint.x+radiusX)-Math.max(-1,screenPoint.x-radiusX));
+        const coveredY=Math.max(0,Math.min(1,screenPoint.y+radiusY)-Math.max(-1,screenPoint.y-radiusY));
+        tree.detailCoverage=coveredX*coveredY;
+        if(tree.detailCoverage===0)continue;
+        tree.detailCentrality=screenPoint.x**2+screenPoint.y**2;
+        candidates.push(tree);
       }
     }
-    candidates.sort((a,b)=>a.priority-b.priority||a.tree.id-b.tree.id);
-    const selected=new Set();let detailTriangles=0;
-    for(const {tree} of candidates){
+    candidates.sort((a,b)=>b.detailCoverage-a.detailCoverage||a.detailCentrality-b.detailCentrality||a.id-b.id);
+    let detailTriangles=0;
+    for(const tree of candidates){
       if(selected.size>=maxDetailedTrees)break;
       const variant=variants[tree.variant];prepareDetail(variant);
       if(detailTriangles+variant.highTriangles>detailTriangleBudget)continue;
@@ -257,5 +264,6 @@ export function buildGroves(THREE, materials, terrain, {
     if(shadowChanged)stats.shadowRevision++;
     return stats;
   }
+
   return {group,updateDetail,stats};
 }
