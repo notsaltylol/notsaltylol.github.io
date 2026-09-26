@@ -78,73 +78,89 @@ export function fractalRock(x, y, z) {
 
 const clamp01 = x => Math.max(0, Math.min(1, x));
 const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
-const angularDistance = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
-// These few large fracture faces and hanging blocks define the silhouette.
-// Small fractal weathering above deliberately remains compatible with the
-// satellites and foreground; it never substitutes for the main massing.
-const fracturePlanes = [
-  [.08,.96,.09], [.66,.86,-.08], [1.16,.97,.11], [1.82,.89,-.045],
-  [2.46,.95,.15], [3.04,.83,-.10], [3.70,.96,.055], [4.33,.87,-.12],
-  [4.98,.97,.13], [5.60,.88,-.075], [6.05,.95,.035],
-];
-const faults = [
-  // angle, width, radial recession, leaning direction
-  [.74,.060,.095,-.18], [1.54,.046,.085,.12], [2.80,.072,.12,-.16],
-  [3.68,.052,.092,.17], [4.73,.065,.105,-.12], [5.75,.044,.078,.14],
-];
-const shelves = [
-  // center angle, angular extent, depth, shelf reach, undercut, bed tilt
-  [.24,.80,.18,.048,.064,-.042], [2.28,.71,.30,.062,.072,.035],
-  [3.87,.64,.22,.072,.085,-.029], [5.10,.74,.43,.051,.069,.036],
-  [.96,.43,.56,.037,.060,.023],
-];
-const hangingMasses = [
-  // axis, half-width, radial reach, extra drop, lean, surviving block-foot width
-  [.20,.43,.235,1.50,-.14,.16], [2.02,.70,.42,2.35,.045,.61],
-  [3.23,.31,.18,.95,-.16,.14], [4.22,.64,.37,2.10,.10,.43],
-  [5.46,.30,.22,1.30,-.10,.18],
+// The main island is an assemblage of broken rock volumes, not an angular
+// extrusion with several hanging tips. Positions, scale, shear and fracture
+// directions are deliberately unequal. The small fBm surface above is shared
+// with other islands and remains independent of this authored large structure.
+const cragVolumes = [
+  // center X/Y/Z; half widths X/Y/Z; fracture yaw; two vertical shears; bevel
+  [-5.10,-.48,1.85, 1.42,1.64,1.22, -.35,.20,-.08,1.58],
+  [-3.05,-1.02,2.75, 1.68,1.78,1.08, -.10,-.08,.16,1.77],
+  [-.60,-.70,3.36, 1.10,1.48,.94, .30,.22,-.18,1.58],
+  [2.74,-.33,3.02, 1.00,1.37,1.02, -.27,-.14,.23,1.65],
+  [4.85,-.63,1.66, 1.28,1.34,1.31, .44,-.35,-.16,1.57],
+  [5.13,-.48,-1.08, 1.20,1.70,1.43, -.20,.12,.24,1.64],
+  [3.64,-.38,-3.00, 1.55,1.54,1.12, .35,-.23,.12,1.54],
+  [.85,-1.15,-3.43, 1.53,1.60,1.06, -.17,.27,-.32,1.72],
+  [-2.85,-.75,-3.03, 1.60,1.20,1.12, .27,-.25,-.32,1.60],
+  [-4.68,-.29,-1.54, 1.39,1.45,1.36, -.46,.14,.11,1.54],
+  [-3.39,-2.45,1.64, 1.40,1.34,1.04, .31,.31,-.22,1.58],
+  [-.89,-3.02,1.58, 1.31,1.63,1.23, -.24,-.19,.14,1.65],
+  [1.51,-2.47,1.92, 1.11,1.44,1.04, .42,.24,-.15,1.52],
+  [3.14,-2.21,-.40, 1.24,1.36,1.14, -.37,-.22,.24,1.57],
+  [.72,-2.97,-1.56, 1.31,1.65,1.12, .19,.17,-.27,1.62],
+  [-2.16,-2.74,-1.50, 1.25,1.40,1.17, -.41,-.25,.10,1.57],
+  [-.33,-4.16,-.16, 1.08,1.02,.97, .34,-.18,.25,1.61],
 ];
 
-/** Dimensionless macro structure; angle is periodic and depth runs rim 0–1. */
-export function cliffFormation(angle, depth) {
-  let planeRadius = Infinity;
-  for(const [normal,distance,lean] of fracturePlanes){
-    const facing=Math.cos(angle-normal);
-    if(facing<=.35)continue;
-    const support=distance+lean*Math.sin(depth*Math.PI*.88);
-    planeRadius=Math.min(planeRadius,support/facing);
+// Clip a horizontal radial ray against each sheared bevelled polyhedron. The
+// resulting outer surface contains real inclined planes and deep re-entrant
+// fractures; no disconnected rock meshes or intersecting caps are necessary.
+const crags = cragVolumes.map(([x,y,z,sx,sy,sz,yaw,leanX,leanZ,bevel],index) => {
+  const c=Math.cos(yaw),s=Math.sin(yaw),planes=[];
+  const plane=(nx,ny,nz,cut)=>{
+    const a=nx*c/sx-nz*s/sz,b=ny/sy-nx*leanX/sx-nz*leanZ/sz,d=nx*s/sx+nz*c/sz;
+    planes.push([a,b,d,cut+a*x+b*y+d*z]);
+  };
+  // Lower fracture faces narrow unequally in two directions. Some blocks
+  // retain a broad blunt foot, others finish on a long oblique cleave; there
+  // is no rotationally symmetric cone or repeated hanging-tip profile.
+  const taperX=[.29,.21,.34,.15,.30,.19,.27,.23,.31,.16,.12,.18,.29,.23,.14,.26,.08][index];
+  const taperZ=[.17,.23,.13,.32,.18,.28,.12,.25,.16,.31,.23,.13,.18,.11,.27,.17,.12][index];
+  for(const sign of [-1,1]){plane(sign,-taperX,0,1-taperX);plane(0,sign,0,1);plane(0,-taperZ,sign,1-taperZ);}
+  for(const a of [-1,1])for(const b of [-1,1]){
+    plane(a,-.14,b,bevel-.14);plane(a,b,0,bevel+.03);plane(0,a,b,bevel-.04);
   }
-  let joints=0;
-  for(const [axis,width,recession,lean] of faults){
-    const d=angularDistance(angle,axis+depth*lean)/width;
-    joints+=recession*Math.exp(-d*d);
+  plane(index%3===0?-1:1,-1,index%2?-1:1,1.45+(index%4)*.11);
+  // Long oblique breaks cut the exposed face above and below its middle bed.
+  // They turn box-like end caps into unequal wedge planes without pinching
+  // every crag to a point. Their heights vary from block to block.
+  const radial=Math.hypot(x,z)||1,outX=(x*c+z*s)/radial,outZ=(-x*s+z*c)/radial;
+  plane(outX,-1.10,outZ,1.10+(index%3)*.15);
+  plane(outX,.80,outZ,1.19+(index%2)*.16);
+  if(index!==1)plane(outX*.62-outZ*.55,-.12,outZ*.62+outX*.55,1.01+(index%4)*.055);
+  return {minY:y-sy,maxY:y+sy,planes};
+});
+const coreProfile=[[0,1],[.10,.89],[.25,.72],[.43,.53],[.62,.37],[.79,.22],[.93,.105],[1,.026]];
+
+/** Radial envelope of authored 3D crags, in unscaled island coordinates. */
+export function cliffFormation(angle,depth,height=1.14-6.34*depth){
+  let taper=1;
+  for(let i=1;i<coreProfile.length;i++)if(depth>=coreProfile[i-1][0]&&depth<=coreProfile[i][0]){
+    const [a,ra]=coreProfile[i-1],[b,rb]=coreProfile[i];taper=ra+(rb-ra)*(depth-a)/(b-a);break;
   }
-  let ledges=0;
-  for(const [axis,width,level,reach,cut,tilt] of shelves){
-    const delta=angularDistance(angle,axis),patch=1-smooth(width*.56,width,Math.abs(delta));
-    const d=depth-level-delta*tilt;
-    const shelf=smooth(-.033,-.013,d)*(1-smooth(.006,.029,d));
-    const undercut=smooth(.021,.047,d)*(1-smooth(.094,.145,d));
-    ledges+=patch*(shelf*reach-undercut*cut);
+  const centerX=-.38*smooth(.08,.90,depth)+.11*Math.sin(Math.PI*depth),centerZ=-.13*smooth(.14,.92,depth);
+  const dx=Math.cos(angle),dz=Math.sin(angle)*.76;
+  let radius=6.8*taper;
+  // Irregular broad core facets stay behind the main crags and close their
+  // fractures toward one offset, narrowing underside instead of a tip row.
+  let support=Infinity;
+  for(const [normal,distance] of [[.16,.91],[1.03,.95],[1.91,.88],[2.69,.94],[3.46,.90],[4.34,.96],[5.21,.89],[5.84,.97]]){
+    const facing=Math.cos(angle-normal);if(facing>.25)support=Math.min(support,distance/facing);
   }
-  let hangingReach=0,hangingDrop=0,buttress=0;
-  for(const [axis,width,reach,drop,lean,foot] of hangingMasses){
-    const distance=Math.abs(angularDistance(angle,axis+depth*lean));
-    const wedge=Math.max(0,1-distance/width);
-    // The wide western foot is a surviving bedding block, while the shorter
-    // eastern buttress tapers off axis. Their unequal widths and abrupt broken
-    // shoulders keep the lower silhouette from becoming a row of hanging cones.
-    const mass=Math.pow(Math.min(1,wedge/(1-foot)),.82);
-    // Two offset breaks interrupt the broad block with a shelf and a slight
-    // undercut. They affect its large planes, not the shared fine-rock noise.
-    const broadBlock=foot>.4?1:0;
-    const breakDepth=depth+angularDistance(angle,axis)*.10;
-    const bedStep=broadBlock*(.12*smooth(.45,.485,breakDepth)-.15*smooth(.535,.58,breakDepth)
-      +.09*smooth(.71,.75,breakDepth)-.12*smooth(.80,.835,breakDepth));
-    hangingReach=Math.max(hangingReach,mass*reach*(1+bedStep));
-    hangingDrop=Math.max(hangingDrop,mass*drop);
-    buttress=Math.max(buttress,mass);
+  radius*=support;
+  for(const crag of crags){
+    if(height<crag.minY||height>crag.maxY)continue;
+    let near=0,far=Infinity;
+    for(const [nx,ny,nz,limit] of crag.planes){
+      const remaining=limit-nx*centerX-ny*height-nz*centerZ,velocity=nx*dx+nz*dz;
+      if(Math.abs(velocity)<1e-10){if(remaining<0){far=-1;break;}continue;}
+      const hit=remaining/velocity;
+      if(velocity>0)far=Math.min(far,hit);else near=Math.max(near,hit);
+      if(near>far)break;
+    }
+    if(far>=near&&Number.isFinite(far))radius=Math.max(radius,far);
   }
-  return {planeRadius,ledges,joints,hangingReach,hangingDrop,buttress};
+  return {radius,centerX,centerZ};
 }

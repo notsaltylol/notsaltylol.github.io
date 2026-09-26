@@ -9,7 +9,7 @@ import { buildCastle, buildTree, buildPavilion } from './sky-castle-models.js';
 import { buildLandscapeDetails } from './sky-castle-details.js';
 import { buildGroves } from './sky-castle-groves.js';
 import { buildBotany } from './sky-castle-botany.js';
-import { fractalRock } from './sky-castle-geology.js';
+import { buildLookoutTerrain } from './sky-castle-lookout.js';
 import { buildForegroundDetails } from './sky-castle-foreground.js';
 import { STYLES, DEFAULT_STYLE } from './castle-styles.js';
 
@@ -101,49 +101,15 @@ traveler(-.85*LAND_SCALE,2.8*LAND_SCALE,1);traveler(-.56*LAND_SCALE,2.87*LAND_SC
 const foregroundGrass=m.grass.clone();
 foregroundGrass.onBeforeCompile=m.grass.onBeforeCompile;foregroundGrass.customProgramCacheKey=m.grass.customProgramCacheKey;
 foregroundGrass.name='painted-lookout-meadow';
-const ledge=new THREE.Group();ledge.position.set(-8*LAND_SCALE,-3.7*HEIGHT_SCALE,10.5*LAND_SCALE);
-for(const [upper,material,vertical] of [[true,foregroundGrass,.65*HEIGHT_SCALE],[false,m.rock,2.1*HEIGHT_SCALE]]){
- const columns=upper?224:448,rows=upper?72:112;
- const geo=new THREE.SphereGeometry(1,columns,rows,0,Math.PI*2,upper?0:Math.PI/2,Math.PI/2);
- const p=geo.attributes.position;
- for(let i=0;i<p.count;i++){
-  const x=p.getX(i),y=p.getY(i),z=p.getZ(i),a=Math.atan2(z,x);
-  const warp=1+.09*Math.sin(a*3+.4)+.045*Math.cos(a*7-.6)+.08*x*(1-z*z);
-  const px=x*9.5*LAND_SCALE*warp+.85*LAND_SCALE*z*z*(.4+x);
-  const pz=z*2.5*LAND_SCALE*warp+.42*LAND_SCALE*Math.sin(x*2.6)*(1-.4*z*z);
-  const erosion=upper?0:fractalRock(px*.7,y*vertical*.9,pz*.8+12)*Math.sin(Math.min(1,Math.abs(y))*Math.PI);
-  const knolls=.25*Math.exp(-(((x+.35)/.38)**2+((z+.1)/.75)**2))
-   +.16*Math.exp(-(((x-.48)/.4)**2+((z+.30)/.7)**2))
-   -.14*Math.exp(-(((x-.02)/.5)**2+((z-.25)/.45)**2));
-  const height=upper?y*vertical+knolls*HEIGHT_SCALE*Math.sqrt(Math.max(0,y))
-   :y*vertical*(1+.18*Math.cos(a+.7)*Math.sin(Math.abs(y)*Math.PI))
-     +HEIGHT_SCALE*.11*Math.sin(a*3+Math.abs(y)*8)*Math.sin(Math.abs(y)*Math.PI)+erosion*.12;
-  p.setXYZ(i,px+erosion*x*.24,height,pz+erosion*z*.24);
- }
- if(!upper){
-  // Subdivide the exact existing meadow boundary. Resampling its curved outline
-  // at a higher resolution would otherwise leave a hairline gap between meshes.
-  const rim=ledge.children[0].geometry.attributes.position,offset=rim.count-225;
-  for(let i=0;i<=columns;i++){
-   const edge=i/2,left=Math.floor(edge),right=Math.min(224,left+1),blend=edge-left;
-   p.setXYZ(i,THREE.MathUtils.lerp(rim.getX(offset+left),rim.getX(offset+right),blend),THREE.MathUtils.lerp(rim.getY(offset+left),rim.getY(offset+right),blend),THREE.MathUtils.lerp(rim.getZ(offset+left),rim.getZ(offset+right),blend));
-  }
- }
- geo.computeVertexNormals();
- const normals=geo.attributes.normal;
- for(let row=0;row<=rows;row++){
-  const first=row*(columns+1),last=first+columns,n=new THREE.Vector3().fromBufferAttribute(normals,first).add(new THREE.Vector3().fromBufferAttribute(normals,last)).normalize();
-  normals.setXYZ(first,n.x,n.y,n.z);normals.setXYZ(last,n.x,n.y,n.z);
- }
- const mesh=new THREE.Mesh(geo,material);mesh.name=upper?'lookout-meadow':'lookout-fractal-rock';mesh.castShadow=mesh.receiveShadow=true;ledge.add(mesh);
-}scene.add(ledge);
+const lookoutLand=buildLookoutTerrain(THREE,{grass:foregroundGrass,rock:m.rock},{scale:LAND_SCALE});
+const ledge=lookoutLand.group;ledge.position.set(-8*LAND_SCALE,-3.7*HEIGHT_SCALE,10.5*LAND_SCALE);scene.add(ledge);
 const foreground = buildForegroundDetails(THREE,m,ledge,{scale:LAND_SCALE}); scene.add(foreground.group);
 for(const [i,x,z,height] of [[0,-11.0,10.7,1.25],[1,-10.2,11.1,.9],[2,-9.6,10.5,1.4],[3,-8.7,11.3,1.05]]){const tree=buildTree(THREE,m,{height,kind:'broadleaf',seed:79+i});tree.position.set(x*LAND_SCALE,foreground.groundHeight(x*LAND_SCALE,z*LAND_SCALE)-.025,z*LAND_SCALE);scene.add(tree);}
 traveler(-6.9*LAND_SCALE,10.45*LAND_SCALE,1.5,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE));traveler(-6.73*LAND_SCALE,10.46*LAND_SCALE,1.0,foreground.groundHeight(-6.73*LAND_SCALE,10.46*LAND_SCALE));
 const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-1000,
  height:(x,z)=>foreground.groundHeight(x+ledge.position.x,z+ledge.position.z)-ledge.position.y,
  trailDistance:(x,z)=>foreground.trailDistance(x+ledge.position.x,z+ledge.position.z),
- radius:a=>LAND_SCALE/Math.hypot(Math.cos(a)/9.2,Math.sin(a)/2.3),
+ radius:lookoutLand.radius,
  contains:(x,z,margin=0)=>foreground.contains(x+ledge.position.x,z+ledge.position.z,margin)};
 const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'satellite',reservedPositions:[[11,-.5,3],[12.7,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
 
@@ -282,10 +248,10 @@ document.getElementById('loading')?.remove();renderer.domElement.style.visibilit
 const pause=document.getElementById('pause');function updatePause(){pause.textContent=paused?'Play motion':'Pause motion';pause.setAttribute('aria-pressed',String(paused));}updatePause();
 pause.addEventListener('click',()=>{paused=!paused;updatePause();});
 function selectView(id){
- azimuthOffset=.24;elevation=.37;elapsed=0;
+ azimuthOffset=.24;elevation=.37;elapsed=0;camera.fov=30;
  if(id==='castle'){focus.copy(terrain.castleAnchor);focus.y+=1.1;zoom=12;elevation=.43;}
  else if(id==='lake'){focus.set(1.5*LAND_SCALE,terrain.waterLevel,1.9*LAND_SCALE);zoom=7;elevation=.48;}
- else if(id==='lookout'){focus.set(-6.9*LAND_SCALE,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE)+.4,10.45*LAND_SCALE);zoom=12;elevation=.35;azimuthOffset=.44;}
+ else if(id==='lookout'){focus.set(-6.9*LAND_SCALE,foreground.groundHeight(-6.9*LAND_SCALE,10.45*LAND_SCALE)+14,10.45*LAND_SCALE);zoom=7;elevation=.12;azimuthOffset=-.56;camera.fov=48;}
  else{focus.set(0,0,0);zoom=1;id='overview';}
  window.castleState.view=id;document.querySelectorAll('[data-view]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.view===id)));
  if(id!=='overview'){paused=true;updatePause();}window.renderFrame(0);

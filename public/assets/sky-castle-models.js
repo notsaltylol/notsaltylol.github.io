@@ -410,14 +410,98 @@ export function buildCastle(THREE, materials) {
   return castle;
 }
 
-export function buildTree(THREE, materials, { height = 1, seed = 1, kind = 'broadleaf' } = {}) {
-  const work = createWorkshop(THREE, materials);
-  const { add, lathe, tube } = work;
-  let state = Math.max(1, Math.floor(seed) % 2147483647);
-  const random = () => (state = state * 16807 % 2147483647) / 2147483647;
-  const h = height;
-  work.group.name = kind === 'cypress' ? 'Mediterranean cypress' : 'Wind-shaped broadleaf tree';
+/** Shared unit-size branching plan. Both foliage LODs use these exact masses. */
+export function createTreeStructure({seed=1,kind='broadleaf',form}={}) {
+  let state=Math.max(1,Math.floor(seed)%2147483647);
+  const random=()=>(state=state*16807%2147483647)/2147483647;
+  const habit=kind==='cypress'?'cypress':form||['spreading','upright','windswept'][Math.floor(seed/7)%3];
+  const branches=[],crowns=[],yaw=random()*Math.PI*2;
+  const trunk=[[0,0,0],[-.022,.19,.006],[.018,.39,-.012],[habit==='windswept'?.11:.026,.68,.018]];
+  branches.push({points:trunk,radius:.029});
+  if(habit==='cypress') {
+    for(let i=0;i<7;i++) {
+      const t=i/6,a=i*2.399963+yaw,y=.30+t*.60,r=.108*(1-.67*t);
+      const center=[Math.cos(a)*r*.34+Math.sin(y*3.6)*.028,y,Math.sin(a)*r*.34];
+      crowns.push({center,rx:r,rz:r*.71,up:.16*(1-.30*t),down:.051,yaw:a,tilt:.20,phase:random()*6.28});
+      branches.push({points:[[.01,y-.13,0],[center[0]*.7,y-.055,center[2]*.7],center],radius:.009*(1-.55*t)});
+    }
+  } else {
+    // A few unequal scaffold limbs each carry a fan of foliage, leaving real
+    // sky gaps between the lower boughs. Height/width varies by tree habit.
+    const plans=habit==='upright'
+      ? [[-.09,.69,.01,.23,.18],[.045,.82,-.06,.22,.18],[.14,.60,.10,.19,.16]]
+      : habit==='windswept'
+      ? [[-.17,.61,.025,.235,.16],[.09,.77,-.045,.30,.205],[.215,.65,.13,.225,.175]]
+      : [[-.14,.71,.015,.28,.22],[.125,.79,-.08,.255,.205],[.07,.62,.155,.25,.19]];
+    for(let i=0;i<plans.length;i++) {
+      const [x,y,z,rx,rz]=plans[i],a=Math.atan2(z,x)+yaw;
+      const cx=x*Math.cos(yaw)-z*Math.sin(yaw),cz=x*Math.sin(yaw)+z*Math.cos(yaw);
+      const center=[cx*.92+(random()-.5)*.024,y+(random()-.5)*.021,cz*.92+(random()-.5)*.024];
+      const start=[.008,.30+i*.032,-.008],elbow=[cx*.53,y-.16,cz*.55];
+      branches.push({points:[start,elbow,center],radius:.0135-i*.0007});
+      crowns.push({center,rx:rx*(.94+random()*.12),rz:rz*(.94+random()*.10),up:.165+random()*.036,down:.053+random()*.017,yaw:a,tilt:habit==='windswept'?.16:.035,phase:random()*6.28});
+    }
+  }
+  return {habit,branches,crowns};
+}
 
+// Lobed leaf fans have a vaulted top and a shallow, irregular lower skirt.
+// They are neither sphere clusters nor horizontal disks. The same sampled
+// shell is kept in both LODs, including the gaps and exposed scaffold limbs.
+function treeCrownPoint(THREE,crown,angle,latitude) {
+  const ring=Math.sin(latitude),vertical=Math.cos(latitude);
+  const scallop=1+.16*Math.sin(angle*3+crown.phase)+.095*Math.cos(angle*5-crown.phase*.7);
+  const x=Math.cos(angle)*ring*crown.rx*scallop;
+  const z=Math.sin(angle)*ring*crown.rz*(1+.08*Math.sin(angle*4+crown.phase));
+  const crest=.56+.44*Math.sin(angle*3+crown.phase);
+  const top=crown.up*(.64*Math.pow(Math.max(0,vertical),.72)+.55*crest*ring*Math.sqrt(Math.max(0,vertical)));
+  const y=(vertical>=0?top:-crown.down*Math.pow(-vertical,.54))+x*crown.tilt
+    +ring*.018*Math.sin(angle*3+crown.phase);
+  const c=Math.cos(crown.yaw),s=Math.sin(crown.yaw);
+  return new THREE.Vector3(crown.center[0]+x*c-z*s,crown.center[1]+y,crown.center[2]+x*s+z*c);
+}
+
+export function buildTree(THREE, materials, {height=1,seed=1,kind='broadleaf',form,detail='full'}={}) {
+  const work=createWorkshop(THREE,materials),{add}=work,h=height;
+  const structure=createTreeStructure({seed,kind,form});
+  const cypress=structure.habit==='cypress',crownSides=cypress?8:16,crownRings=5;
+  let state=Math.max(1,(Math.floor(seed)+5123)%2147483647);
+  const random=()=>(state=state*16807%2147483647)/2147483647;
+  work.group.name=`${structure.habit} tree — shared branching crown`;
+  function branch(points,radius,segments=5) {
+    for(let i=1;i<points.length;i++) {
+      const a=new THREE.Vector3(...points[i-1]),b=new THREE.Vector3(...points[i]);
+      const vector=b.clone().sub(a),length=vector.length();if(length<.00001)continue;
+      const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),vector.normalize());
+      const geometry=new THREE.CylinderGeometry(radius*(1-i/points.length*.79),radius*(1-(i-1)/points.length*.79),length,segments,1,true);
+      geometry.applyQuaternion(q);geometry.translate(...a.add(b).multiplyScalar(.5).toArray());
+      add(geometry,'trunk',[0,0,0],[0,0,0],[h,h,h]);
+    }
+  }
+  for(const b of structure.branches)branch(b.points,b.radius);
+  for(const crown of structure.crowns) {
+    const points=[],uv=[],index=[],around=crownSides,rings=crownRings;
+    for(let j=0;j<=rings;j++)for(let i=0;i<=around;i++){
+      const p=treeCrownPoint(THREE,crown,i/around*Math.PI*2,j/rings*Math.PI);
+      points.push(p.x,p.y,p.z);uv.push(i/around,j/rings);
+    }
+    for(let j=0;j<rings;j++)for(let i=0;i<around;i++){
+      const a=j*(around+1)+i,b=a+around+1;
+      if(j>0)index.push(a,a+1,b);
+      if(j<rings-1)index.push(a+1,b+1,b);
+    }
+    const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(points,3));
+    geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.setIndex(index);geometry.computeVertexNormals();
+    // Welded seam/pole normals prevent a crease as the tree turns around.
+    const n=geometry.attributes.normal;
+    for(let i=0;i<=around;i++){n.setXYZ(i,0,1,0);n.setXYZ(rings*(around+1)+i,0,-1,0);}
+    for(let j=0;j<=rings;j++){
+      const a=j*(around+1),b=a+around;
+      const normal=new THREE.Vector3().fromBufferAttribute(n,a).add(new THREE.Vector3().fromBufferAttribute(n,b)).normalize();
+      n.setXYZ(a,normal.x,normal.y,normal.z);n.setXYZ(b,normal.x,normal.y,normal.z);
+    }
+    add(geometry,'leaf',[0,0,0],[0,0,0],[h,h,h],true);
+  }
   const leafPositions = [], leafNormals = [], leafUVs = [];
   let leafCount = 0;
   function pointedLeaf(origin, direction, outward, length, width) {
@@ -427,7 +511,7 @@ export function buildTree(THREE, materials, { height = 1, seed = 1, kind = 'broa
     const sideways = new THREE.Vector3().crossVectors(normal, forward).normalize();
     // Closed, gently folded leaves remain visible from both sides. The ridge
     // catches light; UVs follow the midrib from the attached base to the tip.
-    const rim = [[0, 0, 0], [-0.36, -0.012, 0.25], [-0.50, -0.018, 0.56], [0, 0.030, 1], [0.50, -0.018, 0.56], [0.36, -0.012, 0.25]];
+    const rim = [[0, 0, 0], [-0.50, -0.018, 0.48], [0, 0.030, 1], [0.50, -0.018, 0.48]];
     const front = [0, 0.045, 0.48], back = [0, -0.020, 0.48];
     const vertex = ([x, y, z], upper) => {
       const p = origin.clone().addScaledVector(sideways, x * width).addScaledVector(normal, y * width).addScaledVector(forward, z * length);
@@ -444,111 +528,56 @@ export function buildTree(THREE, materials, { height = 1, seed = 1, kind = 'broa
     leafCount++;
   }
 
-  tube('trunk', [[0, h * 0.015, 0], [-h * 0.028, h * 0.22, 0], [h * 0.01, h * 0.41, h * 0.012], [h * 0.05, h * 0.66, 0]], h * 0.029, 12);
-  lathe('trunk', 0, 0, 0, [[0, 0], [h * 0.048, 0], [h * 0.034, h * 0.11], [0, h * 0.30]], false);
-  if (kind === 'cypress') {
-    const profile = [];
-    for (let i = 0; i <= 24; i++) {
-      const t = i / 24;
-      const y = h * (0.18 + 0.82 * t);
-      const radius = h * 0.153 * Math.pow(Math.sin(t * Math.PI), 0.77) * (1.20 - t * 0.48);
-      profile.push(new THREE.Vector2(radius, y));
-    }
-    const geometry = new THREE.LatheGeometry(profile, 32);
-    const position = geometry.attributes.position;
-    for (let i = 0; i < position.count; i++) {
-      const y = position.getY(i) / h;
-      const a = Math.atan2(position.getZ(i), position.getX(i));
-      const ripple = 1 + 0.12 * Math.sin(a * 5 + y * 21 + seed) + 0.065 * Math.cos(a * 9 - y * 33 + seed * 2);
-      position.setXYZ(i, position.getX(i) * ripple + Math.sin(y * 3.9) * h * 0.040, position.getY(i), position.getZ(i) * ripple * 0.87);
-    }
-    geometry.computeVertexNormals();
-    const yaw = random() * Math.PI;
-    const crownRotation = new THREE.Matrix4().makeRotationY(yaw);
-    add(geometry, 'leaf', [0, 0, 0], [0, yaw, 0], [0.88, 1, 0.88], true);
-    // Alternating feather-like sprays overlap the narrow core. Their tips
-    // point upward along the crown, rather than radiating as isolated spikes.
-    for (let spray = 0; spray < 52; spray++) {
-      const t = 0.08 + spray / 51 * 0.82;
-      const y = h * (0.18 + 0.82 * t);
-      const a = spray * 2.399963 + seed * 0.67;
-      const radius = h * 0.153 * Math.pow(Math.sin(t * Math.PI), 0.77) * (1.20 - t * 0.48);
-      const radial = new THREE.Vector3(Math.cos(a), 0, Math.sin(a)).applyMatrix4(crownRotation);
-      const tangent = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)).applyMatrix4(crownRotation);
-      const ripple = 1 + 0.12 * Math.sin(a * 5 + y / h * 21 + seed) + 0.065 * Math.cos(a * 9 - y / h * 33 + seed * 2);
-      const origin = new THREE.Vector3((Math.cos(a) * radius * ripple + Math.sin(y / h * 3.9) * h * 0.040) * 0.91, y, Math.sin(a) * radius * ripple * 0.87 * 0.91).applyMatrix4(crownRotation).addScaledVector(radial, h * 0.003);
-      const sprayDirection = radial.clone().multiplyScalar(0.16).add(new THREE.Vector3(0, 1, 0)).normalize();
-      const tip = origin.clone().addScaledVector(sprayDirection, h * 0.075);
-      tube('trunk', [origin.toArray(), origin.clone().lerp(tip, 0.5).toArray(), tip.toArray()], h * 0.0022, 2);
-      for (let pair = 0; pair < 3; pair++) {
-        for (const side of [-1, 1]) {
-          const base = origin.clone().addScaledVector(sprayDirection, h * (0.010 + pair * 0.020));
-          const direction = sprayDirection.clone().multiplyScalar(0.75).addScaledVector(tangent, side * (0.56 - pair * 0.06)).addScaledVector(radial, 0.04).normalize();
-          pointedLeaf(base, direction, radial, h * (0.042 - pair * 0.004), h * (0.019 - pair * 0.002));
-        }
+  if(detail!=='coarse') {
+    const clusterCount=cypress?52:172;
+    for(let cluster=0;cluster<clusterCount;cluster++) {
+      const crown=structure.crowns[cluster%structure.crowns.length];
+      const order=Math.floor(cluster/structure.crowns.length),angle=order*2.399963+crown.phase;
+      const latitude=.30+(order*.61803398875%1)*2.30;
+      // Interpolate the authored shell triangles: leaves touch their parent
+      // spray even at coarse tessellation, rather than floating off an
+      // idealized analytic surface between the sampled shell vertices.
+      const sample=(a,t)=>{
+        const around=crownSides,rings=crownRings,turn=((a/(Math.PI*2))%1+1)%1*around;
+        const row=Math.min(rings-.000001,Math.max(0,t/Math.PI*rings)),i=Math.floor(turn),j=Math.floor(row),u=turn-i,v=row-j;
+        const p00=treeCrownPoint(THREE,crown,i/around*Math.PI*2,j/rings*Math.PI);
+        const p10=treeCrownPoint(THREE,crown,(i+1)/around*Math.PI*2,j/rings*Math.PI);
+        const p01=treeCrownPoint(THREE,crown,i/around*Math.PI*2,(j+1)/rings*Math.PI);
+        if(u+v<=1)return p00.multiplyScalar(1-u-v).addScaledVector(p10,u).addScaledVector(p01,v);
+        const p11=treeCrownPoint(THREE,crown,(i+1)/around*Math.PI*2,(j+1)/rings*Math.PI);
+        return p11.multiplyScalar(u+v-1).addScaledVector(p10,1-v).addScaledVector(p01,1-u);
+      };
+      const center=sample(angle,latitude).multiplyScalar(h);
+      const da=sample(angle+.004,latitude).multiplyScalar(h).sub(center);
+      const dt=sample(angle,latitude+.004).multiplyScalar(h).sub(center);
+      const normal=new THREE.Vector3().crossVectors(da,dt).normalize();
+      const tangent=da.normalize(),bitangent=new THREE.Vector3().crossVectors(normal,tangent).normalize();
+      const axis=cypress?new THREE.Vector3(0,1,0).addScaledVector(tangent,.20).normalize()
+        :tangent.clone().multiplyScalar(.86).addScaledVector(bitangent,.36).normalize();
+      const across=new THREE.Vector3().crossVectors(normal,axis).normalize();
+      // Fine twigs are attached to the same scaffold fan, not an unrelated
+      // random leaf cloud. Their short length leaves the broad silhouette.
+      if(cluster%3===0) {
+        const attached=new THREE.Vector3(...crown.center).multiplyScalar(h);
+        branch([attached.clone().lerp(center,.58).divideScalar(h).toArray(),center.clone().divideScalar(h).toArray()],.0022,4);
       }
-      pointedLeaf(tip.clone().addScaledVector(sprayDirection, -h * 0.017), sprayDirection, radial, h * 0.032, h * 0.016);
-    }
-  } else {
-    for (let i = 0; i < 5; i++) {
-      const a = i / 5 * Math.PI * 2 + seed;
-      const end = new THREE.Vector3(Math.cos(a) * h * 0.29 + h * 0.04, h * (0.61 + i * 0.025), Math.sin(a) * h * 0.24);
-      tube('trunk', [[h * 0.01, h * 0.34, 0], [Math.cos(a) * h * 0.14, h * 0.50, Math.sin(a) * h * 0.13], end.toArray()], h * 0.014, 10);
-      for (const side of [-1, 1]) {
-        const fork = new THREE.Vector3(Math.cos(a + side * 0.36) * h * 0.36 + h * 0.045, end.y + h * (0.06 + random() * 0.035), Math.sin(a + side * 0.36) * h * 0.28);
-        tube('trunk', [end.clone().multiplyScalar(0.90).toArray(), end.clone().lerp(fork, 0.5).toArray(), fork.toArray()], h * 0.0045, 4);
+      const perCluster=cypress?7:5;
+      for(let leaf=0;leaf<perCluster;leaf++) {
+        const side=leaf%2?-1:1;
+        const direction=axis.clone().multiplyScalar(.82).addScaledVector(across,side*(.44+random()*.10)).addScaledVector(normal,.035).normalize();
+        const length=h*(cypress?.035+random()*.010:.042+random()*.014);
+        const origin=center.clone().addScaledVector(axis,h*(leaf-(perCluster-1)/2)*(cypress?.006:.007)).addScaledVector(normal,h*.003);
+        pointedLeaf(origin,direction,normal,length,length*(cypress?.42:.52));
       }
     }
-    // A continuous wind-shaped crown avoids the stacked-ball silhouette that
-    // becomes especially obvious when lighting is quantized into toon bands.
-    const geometry = new THREE.SphereGeometry(1, 48, 32);
-    const position = geometry.attributes.position;
-    for (let i = 0; i < position.count; i++) {
-      const px = position.getX(i), py = position.getY(i), pz = position.getZ(i);
-      const a = Math.atan2(pz, px);
-      const radial = 1 + 0.085 * Math.sin(a * 3 + seed) * (1 - py * py) + 0.05 * Math.cos(a * 7 + py * 4 + seed);
-      const lifted = py + 0.045 * Math.cos(a * 5 + seed) * (1 - py * py) + px * 0.09;
-      position.setXYZ(i, px * radial + py * 0.14, lifted, pz * radial);
-    }
-    geometry.computeVertexNormals();
-    const yaw = random() * Math.PI;
-    add(geometry, 'leaf', [h * 0.045, h * 0.74, 0], [0, yaw, 0], [h * 0.408, h * 0.242, h * 0.310], true);
-    const rotation = new THREE.Matrix4().makeRotationY(yaw);
-    // Evenly distributed, small overlapping sprigs follow an ellipsoidal
-    // crown. The dense continuous core supplies mass while real leaves break
-    // its edge and create a varied surface at close range.
-    for (let cluster = 0; cluster < 86; cluster++) {
-      const py = -0.72 + cluster / 85 * 1.70;
-      const angle = cluster * 2.399963 + seed * 0.73;
-      const ring = Math.sqrt(Math.max(0, 1 - py * py));
-      const px = Math.cos(angle) * ring, pz = Math.sin(angle) * ring;
-      const radial = 1 + 0.085 * Math.sin(angle * 3 + seed) * (1 - py * py) + 0.05 * Math.cos(angle * 7 + py * 4 + seed);
-      const lifted = py + 0.045 * Math.cos(angle * 5 + seed) * (1 - py * py) + px * 0.09;
-      const center = new THREE.Vector3((px * radial + py * 0.14) * h * 0.435, lifted * h * 0.253, pz * radial * h * 0.326).applyMatrix4(rotation).add(new THREE.Vector3(h * 0.045, h * 0.74, 0));
-      const normal = new THREE.Vector3(px / 0.45, py / 0.26, pz / 0.34).applyMatrix4(rotation).normalize();
-      const tangent = new THREE.Vector3().crossVectors(normal, new THREE.Vector3(0, 1, 0)).normalize();
-      const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
-      const spin = random() * Math.PI * 2;
-      const axis = tangent.clone().multiplyScalar(Math.cos(spin)).addScaledVector(bitangent, Math.sin(spin));
-      const across = new THREE.Vector3().crossVectors(normal, axis).normalize();
-      for (let leaf = 0; leaf < 5; leaf++) {
-        const side = leaf % 2 ? -1 : 1;
-        const direction = axis.clone().multiplyScalar(0.84).addScaledVector(across, side * (0.44 + random() * 0.12)).addScaledVector(normal, 0.05 + random() * 0.055).normalize();
-        const length = h * (0.086 + random() * 0.024);
-        const origin = center.clone().addScaledVector(axis, h * (leaf - 2) * 0.014).addScaledVector(across, side * h * 0.005).addScaledVector(normal, h * (leaf % 2) * 0.002);
-        pointedLeaf(origin, direction, normal, length, length * (0.47 + random() * 0.09));
-      }
-    }
+    const leaves=new THREE.BufferGeometry();
+    leaves.setAttribute('position',new THREE.Float32BufferAttribute(leafPositions,3));
+    leaves.setAttribute('normal',new THREE.Float32BufferAttribute(leafNormals,3));
+    leaves.setAttribute('uv',new THREE.Float32BufferAttribute(leafUVs,2));
+    add(leaves,'leafDetail',[0,0,0],[0,0,0],[1,1,1],true);
   }
-  const leaves = new THREE.BufferGeometry();
-  leaves.setAttribute('position', new THREE.Float32BufferAttribute(leafPositions, 3));
-  leaves.setAttribute('normal', new THREE.Float32BufferAttribute(leafNormals, 3));
-  leaves.setAttribute('uv', new THREE.Float32BufferAttribute(leafUVs, 2));
-  add(leaves, 'leafDetail', [0, 0, 0], [0, 0, 0], [1, 1, 1], true);
-  const tree = work.finish();
-  tree.userData.kind = 'tree';
-  tree.userData.leafCount = leafCount;
-  return tree;
+  const tree=work.finish();tree.userData.kind='tree';tree.userData.form=structure.habit;
+  tree.userData.leafCount=leafCount;tree.userData.detail=detail;return tree;
 }
 
 export function buildPavilion(THREE, materials) {

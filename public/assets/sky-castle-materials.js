@@ -70,6 +70,7 @@ const PIGMENT_GLSL = /* glsl */`
   varying vec3 vPaintWorldPosition;
   varying vec3 vPaintWorldNormal;
   varying vec2 vPaintUv;
+  varying float vPaintTreePigment;
   uniform float uPaintContrast;
   uniform float uPaintBands;
   uniform float uPaintSoftness;
@@ -240,17 +241,21 @@ export function createMaterials(THREE) {
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, shared, { uPaintSurface:{ value:surface } });
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vPaintPosition;\nvarying vec3 vPaintWorldPosition;\nvarying vec3 vPaintWorldNormal;\nvarying vec2 vPaintUv;')
+        .replace('#include <common>', '#include <common>\nvarying vec3 vPaintPosition;\nvarying vec3 vPaintWorldPosition;\nvarying vec3 vPaintWorldNormal;\nvarying vec2 vPaintUv;\nvarying float vPaintTreePigment;')
         .replace('#include <begin_vertex>', /* glsl */`
           #include <begin_vertex>
           vPaintPosition = position;
           vPaintUv = uv;
           vec4 paintWorldPosition = vec4(position, 1.0);
+          vec4 paintAnchor = vec4(0.0, 0.0, 0.0, 1.0);
           #ifdef USE_INSTANCING
             paintWorldPosition = instanceMatrix * paintWorldPosition;
+            paintAnchor = instanceMatrix * paintAnchor;
           #endif
           vPaintWorldPosition = (modelMatrix * paintWorldPosition).xyz;
           vPaintWorldNormal = inverseTransformDirection(transformedNormal, viewMatrix);
+          paintAnchor = modelMatrix * paintAnchor;
+          vPaintTreePigment = fract(sin(dot(paintAnchor.xz, vec2(12.9898, 78.233))) * 43758.5453);
         `);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>\n${PIGMENT_GLSL}`)
@@ -283,7 +288,9 @@ export function createMaterials(THREE) {
             vec3 fractureNormal = normalize(vPaintWorldNormal);
             float fractureFace = smoothstep(0.24, 0.78, abs(dot(fractureNormal, normalize(vec3(0.83, 0.12, 0.55)))))
               * (1.0 - abs(fractureNormal.y));
-            mineralColor = mix(mineralColor, vec3(0.84, 0.95, 1.08), fractureFace * 0.17);
+            mineralColor = mix(mineralColor, vec3(0.84, 0.95, 1.08), fractureFace * 0.23);
+            float chalkFace = smoothstep(0.10, 0.78, fractureNormal.y);
+            mineralColor = mix(mineralColor, vec3(1.10, 1.065, 0.95), chalkFace * 0.18);
             diffuseColor.rgb *= mix(vec3(1.0), mineralColor, uPaintPigment);
             vec4 textureDetail = rockTexture(pigmentPosition);
             pigment = (beds - 0.5) * 0.045 + (crag - 0.5) * 0.14
@@ -296,7 +303,7 @@ export function createMaterials(THREE) {
               // Roughly 1–3 meter painted fragments complement the real crags.
               // Projection and mip levels stay fixed in physical world units.
               vec3 painted = surfacePaint(uRockTexture, vPaintWorldPosition, vPaintWorldNormal, 0.115);
-              vec3 paintRatio = paletteRelativePaint(painted, uRockMean, 0.80, 0.48);
+              vec3 paintRatio = paletteRelativePaint(painted, uRockMean, 0.64, 0.40);
               diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uRockStrength);
               pigment *= 0.42;
             }
@@ -308,8 +315,8 @@ export function createMaterials(THREE) {
             vec3 meadowPosition = pigmentPosition;
             meadowPosition.xz += vec2(paintNoise(pigmentPosition * 0.024 + vec3(7.3)),
               paintNoise(pigmentPosition * 0.028 + vec3(12.8))) * 5.0;
-            float growth = paintNoise(meadowPosition * vec3(0.060, 0.026, 0.060));
-            float dry = paintNoise(meadowPosition * vec3(0.087, 0.038, 0.068) + vec3(3.2, 7.4, 1.1));
+            float growth = paintNoise(meadowPosition * vec3(0.038, 0.022, 0.038));
+            float dry = paintNoise(meadowPosition * vec3(0.056, 0.028, 0.045) + vec3(3.2, 7.4, 1.1));
             // Intermediate washes are elongated and overlap softly. They add
             // a few meters of variation inside the large growth regions without
             // returning to the former one-meter camouflage/noise pattern.
@@ -317,24 +324,32 @@ export function createMaterials(THREE) {
               meadowPosition.y, meadowPosition.z * 0.88 - meadowPosition.x * 0.47);
             float wash = paintNoise(washPosition * vec3(0.23, 0.08, 0.13)) * 0.64
               + paintNoise(washPosition * vec3(0.11, 0.035, 0.29) + vec3(9.4, 2.3, 4.7)) * 0.36;
-            vec3 meadowTint = mix(vec3(0.64, 0.81, 0.87), vec3(1.12, 1.07, 0.84), smoothstep(0.30, 0.70, growth));
-            meadowTint = mix(meadowTint, vec3(1.12, 1.035, 0.73), smoothstep(0.58, 0.79, dry) * 0.40);
+            vec3 meadowTint = mix(vec3(0.76, 0.87, 0.85), vec3(1.10, 1.05, 0.90), smoothstep(0.28, 0.72, growth));
+            meadowTint = mix(meadowTint, vec3(1.10, 1.035, 0.80), smoothstep(0.58, 0.79, dry) * 0.22);
             diffuseColor.rgb *= mix(vec3(1.0), meadowTint, uPaintPigment);
-            pigment = (wash - 0.5) * 0.52
+            pigment = (wash - 0.5) * 0.24
               + (brushPigment - 0.5) * uPaintGrain * 0.16 * brushVisibility;
             if (uMeadowEnabled > 0.5) {
               // Luminance carries the brushwork; relative chroma carries warm
               // and cool strokes. The image never replaces a style's palette.
               vec3 painted = surfacePaint(uMeadowTexture, vPaintWorldPosition, vPaintWorldNormal, 0.055);
-              vec3 paintRatio = paletteRelativePaint(painted, uMeadowMean, 0.78, 0.32);
+              vec3 paintRatio = paletteRelativePaint(painted, uMeadowMean, 0.50, 0.22);
               diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uMeadowStrength);
               pigment *= 0.52;
             }
           }
           if (uPaintSurface > 4.5 && uPaintSurface < 5.5) {
-            // Foliage keeps a quiet crown mass. Its geometry and cast shadows
-            // supply the leaves; a grass texture must not stipple the canopy.
-            pigment = (broadPigment - 0.5) * 0.10;
+            // Crown fans have warm open upper planes and cool cupped undersides.
+            // Broad color masses follow their geometry, not stippled surface noise.
+            float crownTop = smoothstep(-0.22, 0.74, normalize(vPaintWorldNormal).y);
+            vec3 crownTint = mix(vec3(0.65, 0.81, 0.88), vec3(1.12, 1.08, 0.83), crownTop);
+            float crownStrength = mix(0.24, 0.70, uPaintContrast);
+            diffuseColor.rgb *= mix(vec3(1.0), crownTint, crownStrength);
+            // The mesh/instance origin is shared across tree LODs, so this tiny
+            // per-tree pigment variation does not sparkle as the view changes.
+            vec3 treeTint = mix(vec3(0.965, 1.01, 1.035), vec3(1.04, 1.015, 0.96), vPaintTreePigment);
+            diffuseColor.rgb *= mix(vec3(1.0), treeTint, uPaintPigment);
+            pigment = (broadPigment - 0.5) * 0.045;
           }
           if (uPaintSurface > 5.5) {
             // Mineral washes and occasional vertical rain traces soften clean
@@ -417,7 +432,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v10-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v11-${surface}`;
     materials[key] = material;
   }
 

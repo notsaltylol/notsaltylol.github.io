@@ -127,28 +127,27 @@ export function buildGroves(THREE, materials, terrain, {
     g.setAttribute('normal',new THREE.BufferAttribute(n,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));
     g.computeBoundingSphere();return g;
   }
-  const variantSeeds=[29,137,401,743];
+  function treeParts(options) {
+    const model=buildTree(THREE,materials,{height:1,...options});
+    model.updateMatrixWorld(true);
+    const byMaterial=new Map(),originals=new Set();
+    model.traverse(mesh=>{
+      if(!mesh.isMesh)return;
+      if(Array.isArray(mesh.material))throw new Error('Grove tree variants require one material per mesh.');
+      if(!byMaterial.has(mesh.material))byMaterial.set(mesh.material,[]);
+      byMaterial.get(mesh.material).push(mesh.geometry.clone().applyMatrix4(mesh.matrixWorld));originals.add(mesh.geometry);
+    });
+    const parts=[...byMaterial].map(([material,geometries])=>({material,geometry:merge(geometries)}));
+    for(const geometry of originals)geometry.dispose();
+    return parts;
+  }
+  const variantSeeds=[29,137,401,743],forms=['spreading','upright','windswept','cypress'];
   const variants=variantSeeds.map((variantSeed,index)=>{
-    const kind=index===3?'cypress':'broadleaf';
-    const trunk=new THREE.CylinderGeometry(.019,.035,.64,7,1).translate(.012,.32,0);
-    let crown;
-    if(kind==='cypress') {
-      const profile=[];
-      for(let j=0;j<=9;j++){const t=j/9;profile.push(new THREE.Vector2(.15*Math.pow(Math.sin(t*Math.PI),.75)*(1.17-.35*t),.20+.8*t));}
-      crown=new THREE.LatheGeometry(profile,10);
-    } else {
-      crown=new THREE.SphereGeometry(1,20,12);
-      const p=crown.attributes.position;
-      for(let j=0;j<p.count;j++){
-        const x=p.getX(j),y=p.getY(j),z=p.getZ(j),a=Math.atan2(z,x);
-        const ripple=1+.10*Math.sin(a*3+variantSeed)*(1-y*y)+.085*Math.cos(a*7+y*4+variantSeed)
-          +.030*Math.sin(a*13-y*11+variantSeed)*Math.sqrt(Math.max(0,1-y*y));
-        p.setXYZ(j,(x*ripple+y*.14)*.408+.045,(y+.045*Math.cos(a*5+variantSeed)*(1-y*y)+x*.09)*.242+.74,z*ripple*.310);
-      }
-    }
-    crown.computeVertexNormals();crown.computeBoundingSphere();
-    const low=[{geometry:trunk,material:materials.trunk||materials.wood},{geometry:crown,material:materials.leaf}];
-    return {seed:variantSeed,kind,low,high:null,lowTriangles:low.reduce((s,p)=>s+triangleCount(p.geometry),0),highTriangles:0};
+    const kind=index===3?'cypress':'broadleaf',form=forms[index];
+    // Overview and detail are two samplings of the same branching plan. The
+    // core crown shell is identical; only attached twigs/leaves are omitted.
+    const low=treeParts({seed:variantSeed,kind,form,detail:'coarse'});
+    return {seed:variantSeed,kind,form,low,high:null,lowTriangles:low.reduce((sum,p)=>sum+triangleCount(p.geometry),0),highTriangles:0};
   });
 
   const transform=new THREE.Object3D();
@@ -180,18 +179,8 @@ export function buildGroves(THREE, materials, terrain, {
 
   function prepareDetail(variant) {
     if(variant.high)return;
-    const model=buildTree(THREE,materials,{height:1,seed:variant.seed,kind:variant.kind});
-    model.updateMatrixWorld(true);
-    const byMaterial=new Map(), originals=new Set();
-    model.traverse(mesh=>{
-      if(!mesh.isMesh)return;
-      if(Array.isArray(mesh.material))throw new Error('Grove tree variants require one material per mesh.');
-      if(!byMaterial.has(mesh.material))byMaterial.set(mesh.material,[]);
-      byMaterial.get(mesh.material).push(mesh.geometry.clone().applyMatrix4(mesh.matrixWorld));originals.add(mesh.geometry);
-    });
-    variant.high=[...byMaterial].map(([material,parts])=>({material,geometry:merge(parts)}));
+    variant.high=treeParts({seed:variant.seed,kind:variant.kind,form:variant.form});
     variant.highTriangles=variant.high.reduce((sum,p)=>sum+triangleCount(p.geometry),0);
-    for(const geometry of originals)geometry.dispose();
   }
 
   const stats={requestedTrees:requested,treeCount:trees.length,tiles:tiles.size,variants:variants.length,

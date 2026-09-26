@@ -228,35 +228,23 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   // Broken shelves and deep fault clefts shape the mass before fine erosion.
   const cliffP = [], cliffU = [], cliffI = [];
   const cliffSegments = segments * 2, cliffRings = Math.round(72 * Math.max(1, Math.min(2, verticalScale)));
-  const cliffProfile = [[0,1],[.055,.985],[.15,.94],[.29,.84],[.43,.71],[.60,.53],[.77,.355],[.90,.22],[1,.105]];
   function inscriptionProtection(a, x, y) {
-    const nameX = smooth(-5.35, -4.90, x / scale) * (1 - smooth(-1.10, -.65, x / scale));
-    const nameY = smooth(-2.35, -1.98, y / verticalScale) * (1 - smooth(-.42, -.08, y / verticalScale));
-    return 1 - nameX * nameY * smooth(.70, .96, Math.sin(a)) * .94;
+    const nameX = smooth(-4.65,-4.25,x/scale)*(1-smooth(-1.60,-1.20,x/scale));
+    const nameY = smooth(-2.65,-2.30,y/verticalScale)*(1-smooth(-.25,.05,y/verticalScale));
+    return 1 - nameX * nameY * smooth(.45,.72,Math.sin(a))*.98;
   }
   function cliffBase(a, t) {
-    let taper = 1;
-    for (let k = 1; k < cliffProfile.length; k++) if (t >= cliffProfile[k-1][0] && t <= cliffProfile[k][0]) {
-      const blend=(t-cliffProfile[k-1][0])/(cliffProfile[k][0]-cliffProfile[k-1][0]);
-      taper=cliffProfile[k-1][1]*(1-blend)+cliffProfile[k][1]*blend;
-    }
     const channelAngle=Math.abs(Math.atan2(Math.sin(a-fallAngle),Math.cos(a-fallAngle)));
     const clearFall=smooth(.11,.27,channelAngle);
-    const rimY = height(Math.cos(a) * radius(a), Math.sin(a) * radius(a) * .76);
-    const formation = cliffFormation(a, t);
-    // The skirt grows into five unequal blocks, then closes upward beneath
-    // them. Keeping their reach at the last ring prevents a common cone apex.
-    const support=smooth(.20,.78,t);
-    const y=rimY*(1-t)-(2.60+formation.hangingDrop)*verticalScale*t;
-    const planeBlend=smooth(.018,.14,t);
-    const coreRadius=radius(a)*taper*(1-planeBlend)+6.8*scale*taper*formation.planeRadius*planeBlend;
-    const projectedRadius=coreRadius+6.8*scale*formation.hangingReach*support;
-    const x0=Math.cos(a)*projectedRadius-.70*t*scale;
-    const nameProtection=inscriptionProtection(a,x0,y);
-    const relief=smooth(.018,.10,t)*(1-smooth(.91,1,t))*clearFall*nameProtection;
-    const r=projectedRadius+6.8*scale*(formation.ledges-formation.joints)*taper*relief;
-    let x=Math.cos(a)*r-.70*t*scale;
-    let z=Math.sin(a)*r*.76+.16*t*scale;
+    const rimY=height(Math.cos(a)*radius(a),Math.sin(a)*radius(a)*.76);
+    const y=rimY*(1-t)-5.20*verticalScale*t;
+    const formation=cliffFormation(a,t,y/verticalScale);
+    // Blend only the attachment collar. Below it the surface is the actual
+    // outer envelope of the authored intersecting rock volumes and core.
+    const blend=smooth(.012,.115,t);
+    const r=radius(a)*(1-.25*t)*(1-blend)+formation.radius*scale*blend;
+    let x=Math.cos(a)*r+formation.centerX*scale*blend;
+    let z=Math.sin(a)*r*.76+formation.centerZ*scale*blend;
     // The outlet retains the original recession envelope. No projecting ledge
     // may enter the falling water column, even beside a deep hanging block.
     if(clearFall<1){
@@ -297,21 +285,13 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
       const verticalErosion = scale === 1 ? fractalRock(x * .67 + 17.3, y * .91 - 4.8, z * .67) : coherentNoise3D(x * .67 + 17.3, y * .91 - 4.8, z * .67);
       y += verticalErosion * .105 * envelope;
     }
-    // One unbroken inclined bedding face survives between the larger faults.
-    // It is part of the same rock skin, with soft shoulders; the raycast stone
-    // lettering can sit across it without crossing a ledge halfway up a glyph.
-    const beddingY=y/verticalScale+.12*(x/scale+2.1)+.06*Math.sin(x/scale*4.3);
-    const quietFace=smooth(-4.55,-3.40,x/scale)*(1-smooth(-.70,-.30,x/scale))
-      *smooth(-2.55,-1.62,beddingY)*(1-smooth(-.77,-.14,beddingY))
-      *smooth(.30,.65,Math.sin(a));
-    z+=(4.10*scale+.20*x+.10*y*scale/verticalScale-z)*quietFace;
     cliffP.push(x, y, z); cliffU.push(i / cliffSegments, t);
   }
   for (let j = 0; j < cliffRings; j++) for (let i = 0; i < cliffSegments; i++) {
     const a = j * (cliffSegments + 1) + i, b = a + cliffSegments + 1;
     cliffI.push(a, a + 1, b, a + 1, b + 1, b);
   }
-  const tip=cliffP.length/3;cliffP.push(-.70 * scale,-2.44 * verticalScale,.16 * scale);cliffU.push(.5,1);
+  const tip=cliffP.length/3;cliffP.push(-.38 * scale,-5.27 * verticalScale,-.13 * scale);cliffU.push(.5,1);
   for(let i=0;i<cliffSegments;i++){const a=cliffRings*(cliffSegments+1)+i;cliffI.push(a,a+1,tip);}
   const cliffGeometry = geometry(cliffP, cliffU, cliffI);
   // The UV seam duplicates vertices. Average their normals explicitly so
@@ -322,37 +302,36 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const n = new THREE.Vector3(normal.getX(first) + normal.getX(last), normal.getY(first) + normal.getY(last), normal.getZ(first) + normal.getZ(last)).normalize();
     normal.setXYZ(first, n.x, n.y, n.z); normal.setXYZ(last, n.x, n.y, n.z);
   }
-  const cliff = add(cliffGeometry, materials.rock);
-  cliff.name = 'continuous-eroded-cliff';
-  // Turf trails irregularly over the first rock beds, following their actual
-  // surface. Patchy depths avoid a constant-height green rim or floating lip.
-  const skirtP = [], skirtU = [], skirtI = [];
-  const skirtRows=6;
-  for(let j=0;j<=skirtRows;j++)for(let i=0;i<=cliffSegments;i++){
+  // Turf uses the exact cliff triangles, never a second coarse skin. This
+  // matters where the authored crags fold under the rim: an overlay would
+  // bridge their sharp shoulders and show floating green stripes from below.
+  const rimTurfDepth=[];
+  for(let i=0;i<=cliffSegments;i++){
     const a=(i===cliffSegments?0:i/cliffSegments)*Math.PI*2;
     const habitat=coherentNoise3D(Math.cos(a)*3.1+9.2,.7,Math.sin(a)*3.1);
     const fine=coherentNoise3D(Math.cos(a)*17.2,1.6,Math.sin(a)*17.2);
     const channelAngle=Math.abs(Math.atan2(Math.sin(a-fallAngle),Math.cos(a-fallAngle)));
-    const depth=(.003+.064*smooth(-.03,.42,habitat)+.008*smooth(-.10,.38,fine))*smooth(.18,.34,channelAngle);
-    const ring=depth*j/skirtRows*cliffRings,left=Math.floor(ring),blend=ring-left;
-    const p=(left*(cliffSegments+1)+i)*3,q=((left+1)*(cliffSegments+1)+i)*3;
-    // Follow the actual displaced cliff edges; using the analytic base here
-    // would leave floating turf over a strongly recessed fracture.
-    const x=cliffP[p]+(cliffP[q]-cliffP[p])*blend;
-    const y=cliffP[p+1]+(cliffP[q+1]-cliffP[p+1])*blend;
-    const z=cliffP[p+2]+(cliffP[q+2]-cliffP[p+2])*blend;
-    const offset=j===0||depth<1e-8?0:.018;
-    skirtP.push(x+Math.cos(a)*offset,y+(offset===0?0:.002),z+Math.sin(a)*offset);
-    skirtU.push(i/cliffSegments,j/skirtRows);
+    rimTurfDepth.push((.004+.023*smooth(-.03,.42,habitat)+.004*smooth(-.10,.38,fine))*smooth(.18,.34,channelAngle));
   }
-  for (let j=0;j<skirtRows;j++) for (let i=0;i<cliffSegments;i++) {
-    const a=j*(cliffSegments+1)+i,b=a+cliffSegments+1;
-    for(const triangle of [[a,a+1,b],[a+1,b+1,b]]){
-      const [p,q,r]=triangle.map(vertex=>new THREE.Vector3().fromArray(skirtP,vertex*3));
-      if(q.sub(p).cross(r.sub(p)).lengthSq()>1e-16)skirtI.push(...triangle);
+  const bareRock=[],rimTurf=[],turfA=new THREE.Vector3(),turfB=new THREE.Vector3(),turfC=new THREE.Vector3();
+  for(let k=0;k<cliffI.length;k+=3){
+    const a=cliffI[k],b=cliffI[k+1],c=cliffI[k+2];
+    const depth=(Math.floor(a/(cliffSegments+1))+Math.floor(b/(cliffSegments+1))+Math.floor(c/(cliffSegments+1)))/(3*cliffRings);
+    const habitat=(rimTurfDepth[a%(cliffSegments+1)]+rimTurfDepth[b%(cliffSegments+1)]+rimTurfDepth[c%(cliffSegments+1)])/3;
+    let grassy=false;
+    if(depth<habitat){
+      turfA.fromArray(cliffP,a*3);turfB.fromArray(cliffP,b*3).sub(turfA);turfC.fromArray(cliffP,c*3).sub(turfA);
+      const face=turfB.cross(turfC).normalize();
+      // Plants occupy the upward-facing ledges, not the hanging underside.
+      grassy=face.y>.05;
     }
+    (grassy?rimTurf:bareRock).push(a,b,c);
   }
-  const turf=add(geometry(skirtP,skirtU,skirtI),materials.grass);turf.name='broken-turf-and-rock-rim';
+  cliffGeometry.setIndex([...bareRock,...rimTurf]);
+  cliffGeometry.addGroup(0,bareRock.length,0);
+  if(rimTurf.length)cliffGeometry.addGroup(bareRock.length,rimTurf.length,1);
+  const cliff=add(cliffGeometry,[materials.rock,materials.grass]);
+  cliff.name='continuous-eroded-cliff';cliff.userData.rimTurfTriangles=rimTurf.length/3;
 
   // Lake vertices are built directly in XZ, so water shader ripples remain in
   // the horizontal plane. Its edge disappears into the excavated shoreline.
