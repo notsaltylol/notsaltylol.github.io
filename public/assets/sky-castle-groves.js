@@ -36,7 +36,7 @@ export function buildGroves(THREE, materials, terrain, {
     : { x:point.x, z:point.z, radius:point.radius ?? 1.4 });
 
   if (islandKind === 'main') {
-    const landmarks = [[-4.8,-1.2],[-4.1,.4],[-2.1,-2.8],[-1,-3.8],
+    const landmarks = [[-4.52,-1.48],[-4.1,.4],[-1.96,-2.8],[-1,-3.8],
       [2.8,-3.1],[4.7,-1.8],[4.5,1.4],[-4.8,2],[-.9,3.5],[4.1,-2.6]];
     for (const [x,z] of landmarks) reserved.push({x:x*terrainScale,z:z*terrainScale,radius:1.6});
     if (terrain.castleAnchor) reserved.push({x:terrain.castleAnchor.x,z:terrain.castleAnchor.z,radius:2.7});
@@ -46,6 +46,7 @@ export function buildGroves(THREE, materials, terrain, {
 
   const trailDistance = terrain.worldTrailDistance || terrain.trailDistance;
   function allowed(x, z, height = maxHeight) {
+    if((terrain.rockExposure?.(x,z)||0)>.15)return false;
     const crownRadius = height * .47;
     if(terrain.isReserved?.(x,z,crownRadius+.2))return false;
     if (!terrain.contains(x,z,crownRadius+.15)) return false;
@@ -109,7 +110,8 @@ export function buildGroves(THREE, materials, terrain, {
       tiles.set(key,{key,variant,trees:[],low:[],high:[],signature:null,inView:true,sphere:new THREE.Sphere()});
     }
     const tile=tiles.get(key);
-    const tree={id:trees.length,x,y:terrain.height(x,z)-.018,z,height,yaw:random()*Math.PI*2,
+    const sampledGround=terrain.surfaceHeight?.(x,z);
+    const tree={id:trees.length,x,y:(Number.isFinite(sampledGround)?sampledGround:terrain.height(x,z))-.018,z,height,yaw:random()*Math.PI*2,
       width:between(.88,1.12),variant:tile.variant,tile};
     trees.push(tree);tile.trees.push(tree);
     const bucketKey=cellKey(Math.floor(x/spacing),Math.floor(z/spacing));

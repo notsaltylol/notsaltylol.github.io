@@ -60,10 +60,10 @@ scene.add(castle);
 const acropolis=buildAcropolis(THREE,m,terrain);scene.add(acropolis.group);
 
 // Unequal tree silhouettes follow the actual height field and frame the hill.
-const trees = [[-4.8,-1.2,1.7,'cypress'],[-4.1,.4,1.35,'cypress'],[-2.1,-2.8,1.45,'cypress'],[-1.0,-3.8,1.6,'broadleaf'],[2.8,-3.1,1.2,'broadleaf'],[4.7,-1.8,1.8,'broadleaf'],[4.5,1.4,1.1,'cypress'],[-4.8,2,1.25,'broadleaf'],[-.9,3.5,.9,'broadleaf']];
+const trees = [[-4.52,-1.48,1.7,'cypress'],[-4.1,.4,1.35,'cypress'],[-1.96,-2.8,1.45,'cypress'],[-1.0,-3.8,1.6,'broadleaf'],[2.8,-3.1,1.2,'broadleaf'],[4.7,-1.8,1.8,'broadleaf'],[4.5,1.4,1.1,'cypress'],[-4.8,2,1.25,'broadleaf'],[-.9,3.5,.9,'broadleaf']];
 for(let i=0;i<trees.length;i++) {
   const [x,z,height,kind]=trees[i]; const tree=buildTree(THREE,m,{height,kind,seed:i*17+3});
-  tree.position.set(x*LAND_SCALE,terrain.height(x*LAND_SCALE,z*LAND_SCALE),z*LAND_SCALE); scene.add(tree);
+  tree.position.set(x*LAND_SCALE,terrain.surfaceHeight(x*LAND_SCALE,z*LAND_SCALE),z*LAND_SCALE); scene.add(tree);
 }
 const pavilion=buildPavilion(THREE,m);pavilion.scale.setScalar(.64);pavilion.position.set(4.1*LAND_SCALE,terrain.height(4.1*LAND_SCALE,-2.6*LAND_SCALE),-2.6*LAND_SCALE);scene.add(pavilion);
 const groves=buildGroves(THREE,m,terrain,{buildTree,count:900,reservedPositions:trees.map(([x,z])=>[x*LAND_SCALE,z*LAND_SCALE,1.3])});scene.add(groves.group);groveControllers.push(groves);
@@ -169,14 +169,47 @@ const mists=[];for(let i=0;i<12;i++){
 const target=new THREE.WebGLRenderTarget(renderWidth,renderHeight,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
 target.depthTexture=new THREE.DepthTexture(renderWidth,renderHeight);target.depthTexture.type=THREE.UnsignedIntType;
 target.samples = 4;
-const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},resolution:{value:new THREE.Vector2(renderWidth,renderHeight)},pixelRatio:{value:renderScale},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0},cameraNear:{value:camera.near},cameraFar:{value:camera.far}};
+// A waterfall-only mask carries the true animated alpha. The opaque depth
+// rejects hidden water, while transparent openings leave the cliff ink intact.
+const waterCoverageTarget=new THREE.WebGLRenderTarget(renderWidth,renderHeight,{
+ minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter,depthBuffer:false,stencilBuffer:false,
+});
+const waterCoverageScene=new THREE.Scene();
+const sourceWaterfall=terrain.group.getObjectByName('rolling-turbulent-waterfall');
+const waterCoverageMaterial=m.waterfall.userData.coverageMaterial;
+waterCoverageMaterial.uniforms.uOpaqueDepth.value=target.depthTexture;
+waterCoverageMaterial.uniforms.uCoverageResolution.value.set(renderWidth,renderHeight);
+const waterCoverageMesh=new THREE.Mesh(sourceWaterfall.geometry,waterCoverageMaterial);
+waterCoverageMesh.matrixAutoUpdate=false;waterCoverageScene.add(waterCoverageMesh);
+const savedClearColor=new THREE.Color();
+const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},waterCoverageMap:{value:waterCoverageTarget.texture},resolution:{value:new THREE.Vector2(renderWidth,renderHeight)},pixelRatio:{value:renderScale},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0},cameraNear:{value:camera.near},cameraFar:{value:camera.far}};
 const postMaterial=new THREE.ShaderMaterial({depthTest:false,depthWrite:false,uniforms:postUniforms,
  vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
- fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper,pixelRatio,cameraNear,cameraFar;
+ fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap,waterCoverageMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper,pixelRatio,cameraNear,cameraFar;
  // Convert the perspective depth buffer to normalized view-space distance
  // before detecting contours; raw perspective depth loses detail at this scale.
  float depthAt(vec2 uv){float raw=texture2D(depthMap,uv).r;return cameraNear/(cameraFar-(cameraFar-cameraNear)*raw);}
- void main(){vec2 uv=vUv;vec2 px=pixelRatio/resolution;vec3 c=texture2D(colorMap,uv).rgb;float d=depthAt(uv);float edge=0.;edge=max(edge,abs(d-depthAt(uv+vec2(px.x,0.))));edge=max(edge,abs(d-depthAt(uv-vec2(px.x,0.))));edge=max(edge,abs(d-depthAt(uv+vec2(0.,px.y))));edge=max(edge,abs(d-depthAt(uv-vec2(0.,px.y))));c=mix(c,inkColor,smoothstep(.0005,.008,edge)*ink);float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
+ void main(){
+  vec2 uv=vUv,px=pixelRatio/resolution;vec3 c=texture2D(colorMap,uv).rgb;
+  float d=depthAt(uv),edge=0.;
+  edge=max(edge,abs(d-depthAt(uv+vec2(px.x,0.))));edge=max(edge,abs(d-depthAt(uv-vec2(px.x,0.))));
+  edge=max(edge,abs(d-depthAt(uv+vec2(0.,px.y))));edge=max(edge,abs(d-depthAt(uv-vec2(0.,px.y))));
+  if(ink>0.){
+   float water=texture2D(waterCoverageMap,uv).r;
+   float left=texture2D(waterCoverageMap,uv-vec2(px.x,0.)).r,right=texture2D(waterCoverageMap,uv+vec2(px.x,0.)).r;
+   float up=texture2D(waterCoverageMap,uv+vec2(0.,px.y)).r,down=texture2D(waterCoverageMap,uv-vec2(0.,px.y)).r;
+   // Ink lies underneath translucent water, rather than over its final color.
+   // Turbulent water scatters fine contours more than broad color, so attenuate
+   // contrast twice by its transmittance. Clear gaps preserve the original ink.
+   // A very quiet alpha contour retains the liquid edge without outlining foam.
+   float waterEdge=max(abs(left-right),abs(up-down));
+   float transmission=1.-water;
+   float contour=smoothstep(.0005,.008,edge)*transmission*transmission;
+   contour+=smoothstep(.12,.65,waterEdge)*water*.10;
+   c=mix(c,inkColor,clamp(contour*ink,0.,1.));
+  }
+  float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;
+  c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
  #include <colorspace_fragment>
  }`});
 const postScene=new THREE.Scene(),postCamera=new THREE.Camera();postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMaterial));
@@ -240,7 +273,14 @@ window.renderFrame=phase=>{
    terrain.waterLevel-(5.8+fall*1.5)*HEIGHT_SCALE+Math.sin(t+i)*.18*HEIGHT_SCALE,
    terrain.lip.z+(.14+.30*fall+Math.cos(a)*.12)*LAND_SCALE);
  });
- renderer.info.reset();renderer.setRenderTarget(target);renderer.render(scene,camera);renderer.setRenderTarget(null);renderer.render(postScene,postCamera);
+ renderer.info.reset();renderer.setRenderTarget(target);renderer.render(scene,camera);
+ if(postUniforms.ink.value>0){
+  waterCoverageMesh.matrix.copy(sourceWaterfall.matrixWorld);
+  renderer.getClearColor(savedClearColor);const savedClearAlpha=renderer.getClearAlpha();
+  renderer.setClearColor(0,0);renderer.setRenderTarget(waterCoverageTarget);renderer.render(waterCoverageScene,camera);
+  renderer.setClearColor(savedClearColor,savedClearAlpha);
+ }
+ renderer.setRenderTarget(null);renderer.render(postScene,postCamera);
  window.castleState.drawCalls=renderer.info.render.calls;window.castleState.triangles=renderer.info.render.triangles;
 };
 window.renderFrame(0);
@@ -287,7 +327,8 @@ if(!capture){
   const next=Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
   if(Math.abs(next-renderScale)<.001)return;
   renderScale=next;renderWidth=Math.floor(W*renderScale);renderHeight=Math.floor(H*renderScale);
-  renderer.setPixelRatio(renderScale);target.setSize(renderWidth,renderHeight);
+  renderer.setPixelRatio(renderScale);target.setSize(renderWidth,renderHeight);waterCoverageTarget.setSize(renderWidth,renderHeight);
+  waterCoverageMaterial.uniforms.uCoverageResolution.value.set(renderWidth,renderHeight);
   postUniforms.resolution.value.set(renderWidth,renderHeight);postUniforms.pixelRatio.value=renderScale;
   window.renderFrame(window.castleState.phase||0);
  });

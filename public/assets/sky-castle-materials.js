@@ -51,12 +51,12 @@ const PALETTES = {
     pigment:0.82, grain:0.045, outlineOpacity:0.06, outlineWidth:0.004,
   },
   cozy: {
-    grass:0x9dbf7e, rock:0xa5af90, stone:0xe8d9b3, stoneLight:0xfaeacb,
+    grass:0x93b77a, rock:0x95a48b, stone:0xe8d9b3, stoneLight:0xfaeacb,
     roof:0x8fbfaf, gold:0xd7b876, dark:0x738875, wood:0xb4a185,
     leaf:0x7e9f76, trunk:0x8b8c72, flower:0xe6ad9e, cloud:0xfaf0d9,
-    water:0x89c4c4, foam:0xeaf5de, shadow:0xadbfaa,
+    water:0x89c4c4, foam:0xeaf5de, shadow:0x879e94,
     sky:0xb8d9dd, fog:0xd9e4d9, outline:0x60755f,
-    ambient:1.8, sunlight:1.6, contrast:0.26, bands:0, softness:0.3,
+    ambient:1.8, sunlight:1.6, contrast:0.42, bands:0, softness:0.3,
     pigment:0.3, grain:0.035, outlineOpacity:0.48, outlineWidth:0.013,
   },
 };
@@ -83,6 +83,10 @@ const PIGMENT_GLSL = /* glsl */`
   uniform vec2 uCloudDrift;
   uniform vec3 uPaintShadow;
   uniform vec3 uPaintMoss;
+  uniform vec3 uUplandRock;
+  #ifdef TERRAIN_MEADOW
+    varying float vTerrainRock;
+  #endif
   uniform sampler2D uMeadowTexture;
   uniform vec3 uMeadowMean;
   uniform float uMeadowEnabled;
@@ -246,6 +250,7 @@ export function createMaterials(THREE) {
     uPaintSoftness:{ value:0.2 }, uPaintPigment:{ value:0.95 },
     uPaintGrain:{ value:0.08 }, uPaintShadow:{ value:new THREE.Color(PALETTES.fantasy.shadow) },
     uPaintMoss:{ value:new THREE.Color(PALETTES.fantasy.grass) },
+    uUplandRock:{value:new THREE.Color(PALETTES.fantasy.rock)},
     uLandscapeScale:{value:1},uCloudStrength:{value:0},
     uCloudSlope:{value:new THREE.Vector2(28/25,8/25)},uCloudDrift:{value:new THREE.Vector2()},
     uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
@@ -363,6 +368,19 @@ export function createMaterials(THREE) {
               diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uMeadowStrength);
               pigment *= 0.52;
             }
+            #ifdef TERRAIN_MEADOW
+              // Rock grows out of the actual steep summit ribs. Interpolated
+              // exposure and broken edges blend turf into the same surface,
+              // with no floating decals or extra meshes over the hillside.
+              float edgeBreak = paintNoise(vPaintWorldPosition * 1.7 + vec3(4.1,2.8,9.2));
+              float outcrop = smoothstep(0.17, 0.70, vTerrainRock + (edgeBreak - 0.5) * 0.16);
+              vec3 uplandPaint=surfacePaint(uRockTexture,vPaintWorldPosition,vPaintWorldNormal,0.115);
+              vec3 uplandRatio=paletteRelativePaint(uplandPaint,uRockMean,0.64,0.40);
+              vec3 exposedColor=uUplandRock*mix(vec3(0.87,0.93,1.02),vec3(1.13,1.08,0.92),
+                smoothstep(0.31,0.74,paintNoise(vPaintWorldPosition*0.10)));
+              exposedColor*=mix(vec3(1.0),uplandRatio,uRockStrength*uRockEnabled);
+              diffuseColor.rgb=mix(diffuseColor.rgb,exposedColor,outcrop);
+            #endif
           }
           if (uPaintSurface > 4.5 && uPaintSurface < 5.5) {
             // Crown fans have warm open upper planes and cool cupped undersides.
@@ -465,9 +483,22 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v12-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v13-${surface}`;
     materials[key] = material;
   }
+
+  // Only the actual main meadow carries terrain exposure. Instanced grass,
+  // leaves and the smaller gardens keep their ordinary plant materials.
+  materials.meadow=materials.grass.clone();materials.meadow.color=materials.grass.color;
+  materials.meadow.name='painted-summit-meadow';
+  materials.meadow.onBeforeCompile=shader=>{
+    materials.grass.onBeforeCompile(shader);
+    shader.defines={...shader.defines,TERRAIN_MEADOW:1};
+    shader.vertexShader=shader.vertexShader.replace('#include <common>',
+      '#include <common>\nattribute float terrainRock;\nvarying float vTerrainRock;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainRock=terrainRock;');
+  };
+  materials.meadow.customProgramCacheKey=()=>materials.grass.customProgramCacheKey()+'-upland';
 
   const waterUniforms = {
     uPhase:{ value:0 }, uWater:{ value:new THREE.Color() },
@@ -543,6 +574,10 @@ export function createMaterials(THREE) {
     uniform sampler2D uSkyTexture;
     uniform float uSkyEnabled;
     uniform float uSkyLod;
+    #ifdef WATER_COVERAGE_PASS
+      uniform sampler2D uOpaqueDepth;
+      uniform vec2 uCoverageResolution;
+    #endif
     #include <fog_pars_fragment>
     float waterHash(vec2 p) {
       vec3 q = fract(vec3(p.xyx) * 0.1031);
@@ -597,6 +632,10 @@ export function createMaterials(THREE) {
       return light * mix(vec3(1.0), chroma, uWaterPigment * 0.18);
     }
     void main() {
+      #ifdef WATER_COVERAGE_PASS
+        float opaqueDepth = texture2D(uOpaqueDepth, gl_FragCoord.xy / uCoverageResolution).r;
+        if (gl_FragCoord.z > opaqueDepth + 0.0000001) discard;
+      #endif
       vec2 uv = vWaterUv;
       float t = uPhase * 6.28318530718;
       vec2 drift = vec2(cos(t), sin(t));
@@ -610,12 +649,17 @@ export function createMaterials(THREE) {
         // and accelerates down the fall instead of sliding on a vertical belt.
         float travel = sqrt(distanceDown + 0.18) - sqrt(0.18);
         float shear = waterField(vec2(across * 0.38, travel * 0.45)) - 0.5;
-        float body = fallingField(vec2(across * 1.30 + shear * 0.60, -travel * 3.20), 2.0, 7.3);
-        float opening = fallingField(vec2(across * 1.12 + shear * 0.90, -travel * 4.80), 2.0, 10.6);
+        float body = fallingField(vec2(across * 1.30 + shear * 0.60,
+          -travel * 3.20 - distanceDown * 0.10), 2.0, 7.3);
+        // Retain accelerating flow, but cap the vertical stretch in physical
+        // space. Broad smooth opacity produces aerated water, not flame cutouts.
+        vec2 openingP = vec2(across * 1.12 + shear * 0.90,
+          -travel * 5.40 - distanceDown * 0.35);
+        float opening = fallingField(openingP, 2.0, 10.6);
+        float openingWidth = max(length(dFdx(openingP)), length(dFdy(openingP)));
+        opening = mix(opening, 0.5, smoothstep(0.75, 2.0, openingWidth));
         float breakup = smoothstep(0.065, 0.78, down);
-        float apertureWidth = max(fwidth(opening), 0.015);
-        float torn = smoothstep(0.22 + breakup * 0.16, 0.52 + breakup * 0.15 + apertureWidth, opening);
-        float coverage = mix(1.0, torn, breakup * 0.96);
+        float coverage = mix(1.0, 0.30 + opening * 0.85, breakup);
         vec2 threadP = vec2(across * 3.1 + shear, -travel * 6.5);
         float threadWidth = max(length(dFdx(threadP)), length(dFdy(threadP)));
         float threadResolve = 1.0 - smoothstep(0.65, 1.65, threadWidth);
@@ -692,6 +736,12 @@ export function createMaterials(THREE) {
         color = mix(color, uFoam, glint * (1.0 - flow * 0.65) + shore * 0.035 + shoreFoam * 0.13 + streamFoam * 0.038 + lipFoam);
         alpha = 1.0;
       }
+      #ifdef WATER_COVERAGE_PASS
+        // Reuse the actual animated coverage, not the rectangular mesh bounds.
+        // Sampling the opaque depth keeps rear water from erasing cliff ink.
+        gl_FragColor = vec4(1.0, 1.0, 1.0, alpha);
+        return;
+      #endif
       color = mix(color, mix(uWater, uFoam, 0.2), uCozy * 0.24);
       gl_FragColor = vec4(color, alpha);
       #include <tonemapping_fragment>
@@ -713,6 +763,18 @@ export function createMaterials(THREE) {
     materials[key].defaultAttributeValues.waterParticle = [0,0,0];
     materials[key].userData.castleSurface = key;
   }
+  // Kept with the water material so motion, palette and alpha stay identical
+  // between the visible fall and its optional post-process coverage pass.
+  const waterfallCoverage = new THREE.ShaderMaterial({
+    name:'waterfall-outline-coverage', defines:{ WATER_COVERAGE_PASS:1 },
+    uniforms:{ ...materials.waterfall.uniforms,
+      uOpaqueDepth:{ value:null }, uCoverageResolution:{ value:new THREE.Vector2(1,1) } },
+    vertexShader:waterVertex, fragmentShader:waterFragment,
+    transparent:true, depthTest:false, depthWrite:false, side:THREE.DoubleSide,
+    fog:false, toneMapped:false,
+  });
+  Object.assign(waterfallCoverage.defaultAttributeValues, materials.waterfall.defaultAttributeValues);
+  materials.waterfall.userData.coverageMaterial = waterfallCoverage;
 
   function setStyle(id) {
     const preset = PALETTES[id] || PALETTES.fantasy;
@@ -724,6 +786,7 @@ export function createMaterials(THREE) {
     shared.uPaintGrain.value = preset.grain;
     shared.uPaintShadow.value.setHex(preset.shadow);
     shared.uPaintMoss.value.setHex(preset.grass);
+    shared.uUplandRock.value.setHex(preset.rock);
     shared.uCloudStrength.value=({original:0.20,fantasy:0.26,ink:0.13,cozy:0.10,ghibli:0.24})[id]??0.26;
     shared.uMeadowStrength.value = ({ original:0.70, fantasy:0.88, ink:0.22, cozy:0.38, ghibli:0.82 })[id] ?? 0.88;
     shared.uRockStrength.value = ({ original:0.76, fantasy:0.92, ink:0.24, cozy:0.36, ghibli:0.84 })[id] ?? 0.92;

@@ -10,6 +10,7 @@ import { createHabitat } from './sky-castle-habitat.js';
  */
 export function buildBotany(THREE, materials, terrain) {
   const worldScale = terrain.scale || 1, areaScale = worldScale * worldScale;
+  const groundHeight=(x,z)=>{const y=terrain.surfaceHeight?.(x,z);return Number.isFinite(y)?y:terrain.height(x,z);};
   const world = (x, z) => terrain.toWorld ? terrain.toWorld(x, z) : { x:x * worldScale, z:z * worldScale };
   const habitat=createHabitat({kind:'main',scale:worldScale}),habitatValue={};
   const group = new THREE.Group();
@@ -42,6 +43,7 @@ export function buildBotany(THREE, materials, terrain) {
     return !wetFootprint || terrain.height(x, z) > terrain.waterLevel + .055;
   }
   function allowed(x, z, clearance = .15, protectGardens = true) {
+    if((terrain.rockExposure?.(x,z)||0)>.15)return false;
     if(terrain.isReserved?.(x,z,clearance))return false;
     if (!terrain.contains(x, z, .24 + clearance) || !dryLand(x, z)) return false;
     if (Math.hypot((x - terrain.castleAnchor.x) / 1.52, (z - terrain.castleAnchor.z) / 1.25) < 1.03) return false;
@@ -225,7 +227,7 @@ export function buildBotany(THREE, materials, terrain) {
       const x = patch[0] + Math.cos(angle) * radius, z = patch[1] + Math.sin(angle) * radius;
       const density=habitat.sample(x,z,habitatValue)[species];
       if(habitatValue.clearing>.72||density<.11||!allowed(x,z,clearance)||!spacing(x,z))continue;
-      roots.push({ x, z, y:terrain.height(x, z) + offsetY, size:range(...sizeRange),
+      roots.push({ x, z, y:groundHeight(x, z) + offsetY, size:range(...sizeRange),
         yaw:range(0, Math.PI * 2), phase:range(0, Math.PI * 2) });
     }
     return roots;
@@ -249,7 +251,7 @@ export function buildBotany(THREE, materials, terrain) {
         if (terrain.height(x, z) > terrain.waterLevel + .065) break;
       }
       if (!allowed(x, z, .07, false)) continue;
-      reedRoots.push({ x, z, y:terrain.height(x, z), size:range(.78, 1.14), yaw:range(0, Math.PI * 2), phase:range(0, Math.PI * 2) });
+      reedRoots.push({ x, z, y:groundHeight(x, z), size:range(.78, 1.14), yaw:range(0, Math.PI * 2), phase:range(0, Math.PI * 2) });
     }
   }
 

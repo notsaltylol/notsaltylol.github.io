@@ -36,6 +36,20 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     return Math.hypot(dx,dz)/lakeShoreRadius(Math.atan2(dz,dx));
   };
   const lakeDistance = (x, z) => localLakeDistance(x / scale, z / scale);
+  // Unequal ribs connect the summit to the surrounding meadow. Narrow steep
+  // faces expose rock while broad upper shoulders retain turf and tree roots.
+  function uplandRibs(x,z) {
+    const dx=x+3.1,dz=z+1.7;
+    const ridge=(cx,cz,width,length,tilt,amplitude)=>{
+      const u=(dx-cx)+(dz-cz)*tilt,v=dz-cz;
+      const cross=Math.exp(-Math.pow(Math.abs(u)/width,3.2));
+      return amplitude*cross*Math.exp(-Math.pow(v/length,4));
+    };
+    return ridge(-1.14,.26,.24,1.04,.48,.48)
+      +ridge(.94,-.48,.21,.90,-.26,.30)
+      +ridge(-.31,-1.29,.31,.50,-.63,.26)
+      +ridge(-.52,1.13,.21,.74,.80,.27);
+  }
   function localHeight(x, z) {
     let h = 1.14 + .13 * Math.sin(x * .9 + z * .45) + .10 * Math.cos(z * 1.6 - x * .28);
     const dx=x+3.1,dz=z+1.7;
@@ -47,6 +61,11 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     h += .56*Math.exp(-((x+1.77)**2/.72+(z+2.74)**2/1.17));
     h -= .23*Math.exp(-((x+4.08+.18*dz)**2/.11+(z+.78)**2/1.10));
     h += .55 * Math.exp(-((x - 3.7) ** 2 / 2.8 + (z + 2.8) ** 2 / 2));
+    h += uplandRibs(x,z);
+    // A hollow on the lake-facing flank separates the long sunward shoulder
+    // from the quieter approach saddle. The keep remains above every rib.
+    h -= .39*Math.exp(-((x+1.93-.26*(z+.62))**2/.32+(z+.62)**2/1.05));
+    if(h>2.39)h=2.39+.15*(1-Math.exp(-(h-2.39)/.15));
     // Keep the exact anchor and a physically buildable central keep footprint.
     // The smaller irregular bench blends into a ridge instead of a flat mesa.
     const benchX=Math.max(.68,1.38/scale),benchZ=Math.max(.59,1.38/scale);
@@ -66,6 +85,15 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     return h * (1 - excavation) + .55 * excavation;
   }
   const height = (x, z) => localHeight(x / scale, z / scale) * verticalScale;
+  function rockExposure(x,z){
+    const lx=x/scale,lz=z/scale,d=Math.hypot(lx+3.1,lz+1.7);
+    const mountain=(1-smooth(2.05,2.70,d))*smooth(.72,1.02,d);
+    if(mountain===0)return 0;
+    const e=.012,dx=(localHeight(lx+e,lz)-localHeight(lx-e,lz))/(2*e);
+    const dz=(localHeight(lx,lz+e)-localHeight(lx,lz-e))/(2*e);
+    const normalY=1/Math.sqrt(1+dx*dx+dz*dz);
+    return mountain*Math.max(1-smooth(.58,.82,normalY),smooth(.06,.27,uplandRibs(lx,lz))*.28);
+  }
   const castleAnchor = new THREE.Vector3(-3.1 * scale, height(-3.1 * scale, -1.7 * scale), -1.7 * scale);
   const trail = new THREE.CatmullRomCurve3([[-.8,2.8],[-2.5,2.1],[-3.8,.9],[-2.7,-.25],[-3.1,-1.7]].map(([x,z]) => new THREE.Vector3(x * scale, 0, z * scale)));
   const trailSteps = Math.max(100, Math.min(1200, Math.round(100 * scale)));
@@ -140,10 +168,12 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
       const x=Math.cos(a)*r,z=Math.sin(a)*r*.76,d=lakeDistance(x,z);
       const channel=Math.abs(x/scale-localRiverX(z/scale));
       const lakeBank=d>.91&&d<1.43,riverBank=z/scale>.6&&channel>.20&&channel<.69;
-      if(!lakeBank&&!riverBank)continue;
+      const summitDistance=Math.hypot(x/scale+3.1,z/scale+1.7);
+      const upland=summitDistance>.60&&summitDistance<2.55;
+      if(!lakeBank&&!riverBank&&!upland)continue;
       const steep=(lakeBank&&d>1.01&&d<1.29)||(riverBank&&channel>.29&&channel<.65);
       const cellSize=Math.max(radius(a)/rings,r*Math.PI*2/segments);
-      const target=Math.min(steep?4:2,2**Math.max(0,Math.ceil(Math.log2(cellSize/.22))));
+      const target=Math.min(steep||upland?4:2,2**Math.max(0,Math.ceil(Math.log2(cellSize/(upland?.24:.22)))));
       refinement[j*segments+i]=target;
       if(target>1)refinedBankCells++;
     }
@@ -199,7 +229,20 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   function add(g, material) {
     const m = new THREE.Mesh(g, material); m.castShadow = m.receiveShadow = true; group.add(m); return m;
   }
-  const meadow = add(geometry(positions, uvs, indices), materials.grass);
+  const meadowGeometry=geometry(positions,uvs,indices);
+  const exposedRock=[];
+  const meadowNormals=meadowGeometry.attributes.normal;
+  for(let i=0;i<positions.length;i+=3){
+    const x=positions[i]/scale,z=positions[i+2]/scale;
+    const summitDistance=Math.hypot(x+3.1,z+1.7);
+    const mountain=(1-smooth(2.05,2.70,summitDistance))*smooth(.72,1.02,summitDistance);
+    const steep=1-smooth(.58,.82,meadowNormals.getY(i/3));
+    const ribs=smooth(.06,.27,uplandRibs(x,z));
+    exposedRock.push(mountain*Math.max(steep,ribs*.28));
+  }
+  meadowGeometry.setAttribute('terrainRock',new THREE.Float32BufferAttribute(exposedRock,1));
+  const meadowMaterial=materials.meadow||materials.grass;
+  const meadow = add(meadowGeometry, meadowMaterial);
   meadow.name = 'continuous-sculpted-meadow';
   const surfaceHeight=createGroundSampler(meadow.geometry,{cellSize:Math.max(.25,Math.min(2,scale*.2))});
   let lipLocalZ = 2;
@@ -225,7 +268,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     meadow.geometry.clearGroups();
     meadow.geometry.addGroup(0,meadowGrass.length,0);
     meadow.geometry.addGroup(meadowGrass.length,meadowStone.length,1);
-    meadow.material=[materials.grass,materials.rock];
+    meadow.material=[meadowMaterial,materials.rock];
   }
 
   // The fixed meadow boundary blends into independently leaning rock faces.
@@ -243,12 +286,12 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const rimY=height(Math.cos(a)*radius(a),Math.sin(a)*radius(a)*.76);
     const y=rimY*(1-t)-5.20*verticalScale*t;
     const formation=cliffFormation(a,t,y/verticalScale);
-    // Blend only the attachment collar. Below it the surface is the actual
-    // outer envelope of the authored intersecting rock volumes and core.
-    const blend=smooth(.012,.115,t);
-    const r=radius(a)*(1-.25*t)*(1-blend)+formation.radius*scale*blend;
-    let x=Math.cos(a)*r+formation.centerX*scale*blend;
-    let z=Math.sin(a)*r*.76+formation.centerZ*scale*blend;
+    // The bedrock profile inherits the exact unequal meadow boundary. A
+    // direct ratio removes the old broad interpolated collar while keeping
+    // each wedge and oblique shelf connected to the land above it.
+    const r=radius(a)*formation.radius/6.8;
+    let x=Math.cos(a)*r+formation.centerX*scale;
+    let z=Math.sin(a)*r*.76+formation.centerZ*scale;
     // The outlet retains the original recession envelope. No projecting ledge
     // may enter the falling water column, even beside a deep hanging block.
     if(clearFall<1){
@@ -323,14 +366,16 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const depth=(Math.floor(a/(cliffSegments+1))+Math.floor(b/(cliffSegments+1))+Math.floor(c/(cliffSegments+1)))/(3*cliffRings);
     const habitat=(rimTurfDepth[a%(cliffSegments+1)]+rimTurfDepth[b%(cliffSegments+1)]+rimTurfDepth[c%(cliffSegments+1)])/3;
     let grassy=false;
-    if(depth<habitat){
+    // A turf edge stays physically thin when the land is enlarged; scaling
+    // it with the island creates a false green skirt on exposed rock ledges.
+    if(depth<Math.min(habitat,.018/verticalScale)){
       turfA.fromArray(cliffP,a*3);turfB.fromArray(cliffP,b*3).sub(turfA);turfC.fromArray(cliffP,c*3).sub(turfA);
       const face=turfB.cross(turfC).normalize();
       // Plants occupy the upward-facing ledges, not the hanging underside.
       const x=(cliffP[a*3]+cliffP[b*3]+cliffP[c*3])/3;
       const z=(cliffP[a*3+2]+cliffP[b*3+2]+cliffP[c*3+2])/3;
       const nearOutlet=z>lipZ-.50*scale&&Math.abs(x-riverX(z))<1.0*scale;
-      grassy=face.y>(nearOutlet?.60:.05);
+      grassy=face.y>(nearOutlet?.72:.68);
     }
     (grassy?rimTurf:bareRock).push(a,b,c);
   }
@@ -453,7 +498,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     return contains(x, z, flowers ? .45 : .25) && !isReserved(x,z,flowers?.16:.4) &&
       height(x,z) >= waterLevel + (flowers ? .12 : .05) &&
       Math.hypot(x-castleAnchor.x,z-castleAnchor.z) >= (flowers ? 1.5 : 1.3) &&
-      trailDistance(x,z) >= (flowers ? .26 : .50) && habitat(x,z,flowers)>.015;
+      trailDistance(x,z) >= (flowers ? .26 : .50) && habitat(x,z,flowers)>.015 && (!flowers||rockExposure(x,z)<.15);
   }
   function makePatches(count, flowers) {
     const patches = [];
@@ -501,7 +546,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   for(let i=0;i<stoneCount;i++) {
     const [x,z]=samplePatch(stonePatches[i%stonePatches.length],false);
     const s=.07+random()*.16;
-    dummy.position.set(x,height(x,z)-.025,z); dummy.scale.set(s*(1+random()),s*.60,s);
+    dummy.position.set(x,surfaceHeight(x,z)-.025,z); dummy.scale.set(s*(1+random()),s*.60,s);
     dummy.rotation.set(random()*.6,random()*6.28,random()*.4); dummy.updateMatrix(); stones.setMatrixAt(i,dummy.matrix);
   }
   stones.castShadow = stones.receiveShadow = true; scatterChunks(stones, stoneChunks, 'terrain-scattered-stones');
@@ -509,7 +554,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(.035, 5, 4), materials.flower, flowerCount);
   for(let i=0;i<flowerCount;i++) {
     const [x,z]=samplePatch(flowerPatches[i%flowerPatches.length],true);
-    dummy.position.set(x,height(x,z)+.12,z); dummy.scale.set(1.3,.5,1.3);
+    dummy.position.set(x,surfaceHeight(x,z)+.12,z); dummy.scale.set(1.3,.5,1.3);
     dummy.rotation.set(0,random()*6,0); dummy.updateMatrix(); flowers.setMatrixAt(i,dummy.matrix);
   }
   scatterChunks(flowers, flowerChunks, 'terrain-meadow-flowers');
@@ -537,5 +582,5 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     meadowTriangles:indices.length / 3, lipBankTriangles:meadowStone.length/3, refinedBankCells, cliffTriangles:cliffI.length / 3, lakeTriangles:waterI.length / 3, riverTriangles:riverI.length / 3,
     stonePatches:stonePatches.length, flowerPatches:flowerPatches.length, scatterAttempts, trailWidth:.34 };
   return { group, scale, verticalScale, height, surfaceHeight, contains, radius, lakeDistance, riverX, waterLevel, lip, castleAnchor,
-    toLocal, toWorld, trail, trailDistance, isReserved, updateDetail, detailStats };
+    toLocal, toWorld, trail, trailDistance, isReserved, rockExposure, updateDetail, detailStats };
 }

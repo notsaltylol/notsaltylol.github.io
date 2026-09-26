@@ -79,88 +79,101 @@ export function fractalRock(x, y, z) {
 const clamp01 = x => Math.max(0, Math.min(1, x));
 const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
 
-// The main island is an assemblage of broken rock volumes, not an angular
-// extrusion with several hanging tips. Positions, scale, shear and fracture
-// directions are deliberately unequal. The small fBm surface above is shared
-// with other islands and remains independent of this authored large structure.
-const cragVolumes = [
-  // center X/Y/Z; half widths X/Y/Z; fracture yaw; two vertical shears; bevel
-  [-5.10,-.48,1.85, 1.42,1.64,1.22, -.35,.20,-.08,1.58],
-  [-3.05,-1.02,2.75, 1.68,1.78,1.08, -.10,-.08,.16,1.77],
-  [-.60,-.70,3.36, 1.10,1.48,.94, .30,.22,-.18,1.58],
-  [2.74,-.33,3.02, 1.00,1.37,1.02, -.27,-.14,.23,1.65],
-  [4.85,-.63,1.66, 1.28,1.34,1.31, .44,-.35,-.16,1.57],
-  [5.13,-.48,-1.08, 1.20,1.70,1.43, -.20,.12,.24,1.64],
-  [3.64,-.38,-3.00, 1.55,1.54,1.12, .35,-.23,.12,1.54],
-  [.85,-1.15,-3.43, 1.53,1.60,1.06, -.17,.27,-.32,1.72],
-  [-2.85,-.75,-3.03, 1.60,1.20,1.12, .27,-.25,-.32,1.60],
-  [-4.68,-.29,-1.54, 1.39,1.45,1.36, -.46,.14,.11,1.54],
-  [-3.39,-2.45,1.64, 1.40,1.34,1.04, .31,.31,-.22,1.58],
-  [-.89,-3.02,1.58, 1.31,1.63,1.23, -.24,-.19,.14,1.65],
-  [1.51,-2.47,1.92, 1.11,1.44,1.04, .42,.24,-.15,1.52],
-  [3.14,-2.21,-.40, 1.24,1.36,1.14, -.37,-.22,.24,1.57],
-  [.72,-2.97,-1.56, 1.31,1.65,1.12, .19,.17,-.27,1.62],
-  [-2.16,-2.74,-1.50, 1.25,1.40,1.17, -.41,-.25,.10,1.57],
-  [-.33,-4.16,-.16, 1.08,1.02,.97, .34,-.18,.25,1.61],
+// Connected, inclined bedrock wedges. Each cross-section is an irregular
+// polygon rather than a box; several sloping fracture planes close the lower
+// end, so no horizontal end cap can turn the underside into hanging blocks.
+const volumes = [
+  // center X/Y/Z; half widths X/Y/Z; yaw; vertical shears; variation
+  [-5.02,-.25,1.67, 1.48,1.30,1.35, -.29,.25,-.15,0],
+  [-3.08,-1.00,2.78, 1.89,2.07,1.15, -.06,-.13,.08,1],
+  [-.48,-.80,3.26, 1.23,1.95,1.02, .36,.24,-.22,2],
+  [2.77,-.22,2.79, 1.30,1.20,1.18, -.39,-.18,.19,3],
+  [4.96,-.60,.76, 1.34,1.60,1.55, .34,-.28,-.14,4],
+  [4.40,-.18,-2.29, 1.66,1.12,1.31, -.23,.12,.20,5],
+  [1.43,-.58,-3.26, 1.74,1.55,1.15, .32,-.27,-.22,6],
+  [-2.03,-.32,-3.05, 1.84,1.30,1.37, -.16,-.29,.18,7],
+  [-4.60,-.48,-1.43, 1.45,1.64,1.50, -.43,.20,.21,8],
+  [-1.20,-2.00,.25, 2.80,1.95,2.25, .21,.24,-.31,9],
+  [2.20,-1.85,.60, 1.65,1.30,1.60, -.40,-.18,.24,10],
+  [.90,-2.20,-1.10, 1.65,1.40,1.36, .27,.19,-.26,11],
+  [-2.10,-1.90,-1.30, 1.45,1.15,1.33, -.32,-.27,.13,12],
 ];
-
-// Clip a horizontal radial ray against each sheared bevelled polyhedron. The
-// resulting outer surface contains real inclined planes and deep re-entrant
-// fractures; no disconnected rock meshes or intersecting caps are necessary.
-const crags = cragVolumes.map(([x,y,z,sx,sy,sz,yaw,leanX,leanZ,bevel],index) => {
+const crags=volumes.map(([x,y,z,sx,sy,sz,yaw,leanX,leanZ,variant])=>{
   const c=Math.cos(yaw),s=Math.sin(yaw),planes=[];
-  const plane=(nx,ny,nz,cut)=>{
+  function plane(nx,ny,nz,cut){
     const a=nx*c/sx-nz*s/sz,b=ny/sy-nx*leanX/sx-nz*leanZ/sz,d=nx*s/sx+nz*c/sz;
-    planes.push([a,b,d,cut+a*x+b*y+d*z]);
-  };
-  // Lower fracture faces narrow unequally in two directions. Some blocks
-  // retain a broad blunt foot, others finish on a long oblique cleave; there
-  // is no rotationally symmetric cone or repeated hanging-tip profile.
-  const taperX=[.29,.21,.34,.15,.30,.19,.27,.23,.31,.16,.12,.18,.29,.23,.14,.26,.08][index];
-  const taperZ=[.17,.23,.13,.32,.18,.28,.12,.25,.16,.31,.23,.13,.18,.11,.27,.17,.12][index];
-  for(const sign of [-1,1]){plane(sign,-taperX,0,1-taperX);plane(0,sign,0,1);plane(0,-taperZ,sign,1-taperZ);}
-  for(const a of [-1,1])for(const b of [-1,1]){
-    plane(a,-.14,b,bevel-.14);plane(a,b,0,bevel+.03);plane(0,a,b,bevel-.04);
+    planes.push([a,b,d,cut+a*x+b*y+d*z,1/Math.hypot(a,b,d)]);
   }
-  plane(index%3===0?-1:1,-1,index%2?-1:1,1.45+(index%4)*.11);
-  // Long oblique breaks cut the exposed face above and below its middle bed.
-  // They turn box-like end caps into unequal wedge planes without pinching
-  // every crag to a point. Their heights vary from block to block.
+  // One broad face, two narrower shoulders, and unequal back faces produce
+  // a wedged plan. Tilts narrow the hanging rock continuously toward its foot.
+  const polygon=variant===1?[0,Math.PI/2,Math.PI,3.84,5.43]:[.09,1.28,2.64,3.80,5.22];
+  polygon.forEach((angle,i)=>{
+    const tilt=(variant===1&&i===1)?.12:.39+((variant+i*3)%5)*.061;
+    plane(Math.cos(angle),-tilt,Math.sin(angle),.86+((variant*2+i)%4)*.047);
+  });
+  // Upper cuts are buried against the meadow. The lower three faces meet
+  // along an offset oblique ridge; their unequal pitches are visible in orbit.
+  plane(.14,.98,-.17,1.05);
+  const split=yaw+variant*.71;
+  for(let i=0;i<3;i++){
+    const angle=split+i*Math.PI*2/3;
+    plane(Math.cos(angle)*(1.02+i*.17),-1,Math.sin(angle)*(1.02+i*.17),1.21+(variant%4)*.083+i*.11);
+  }
   const radial=Math.hypot(x,z)||1,outX=(x*c+z*s)/radial,outZ=(-x*s+z*c)/radial;
-  plane(outX,-1.10,outZ,1.10+(index%3)*.15);
-  plane(outX,.80,outZ,1.19+(index%2)*.16);
-  if(index!==1)plane(outX*.62-outZ*.55,-.12,outZ*.62+outX*.55,1.01+(index%4)*.055);
-  return {minY:y-sy,maxY:y+sy,planes};
+  if(variant!==1&&variant!==9)plane(outX,-.92,outZ,1.10+(variant%3)*.09);
+  if(variant===9)plane(.22,-1,.18,1.10);
+  // A small secondary cleave removes one shoulder instead of beveling every
+  // corner equally. This creates distinct broad planes, not uniform facets.
+  plane(Math.cos(2.02+variant*.31),-.07,Math.sin(2.02+variant*.31),1.04);
+  return planes;
 });
-const coreProfile=[[0,1],[.10,.89],[.25,.72],[.43,.53],[.62,.37],[.79,.22],[.93,.105],[1,.026]];
-
-/** Radial envelope of authored 3D crags, in unscaled island coordinates. */
+const coreProfile=[[0,1],[.045,.965],[.12,.86],[.27,.70],[.44,.55],[.64,.39],[.83,.20],[1,.026]];
+function coreRadius(depth){
+  for(let i=1;i<coreProfile.length;i++)if(depth<=coreProfile[i][0]){
+    const [a,ra]=coreProfile[i-1],[b,rb]=coreProfile[i];return 6.8*(ra+(rb-ra)*clamp01((depth-a)/(b-a)));
+  }
+  return .1768;
+}
+/** Radial envelope of connected oblique crags, in unscaled island units. */
 export function cliffFormation(angle,depth,height=1.14-6.34*depth){
-  let taper=1;
-  for(let i=1;i<coreProfile.length;i++)if(depth>=coreProfile[i-1][0]&&depth<=coreProfile[i][0]){
-    const [a,ra]=coreProfile[i-1],[b,rb]=coreProfile[i];taper=ra+(rb-ra)*(depth-a)/(b-a);break;
-  }
-  const centerX=-.38*smooth(.08,.90,depth)+.11*Math.sin(Math.PI*depth),centerZ=-.13*smooth(.14,.92,depth);
-  const dx=Math.cos(angle),dz=Math.sin(angle)*.76;
-  let radius=6.8*taper;
-  // Irregular broad core facets stay behind the main crags and close their
-  // fractures toward one offset, narrowing underside instead of a tip row.
-  let support=Infinity;
-  for(const [normal,distance] of [[.16,.91],[1.03,.95],[1.91,.88],[2.69,.94],[3.46,.90],[4.34,.96],[5.21,.89],[5.84,.97]]){
-    const facing=Math.cos(angle-normal);if(facing>.25)support=Math.min(support,distance/facing);
-  }
-  radius*=support;
-  for(const crag of crags){
-    if(height<crag.minY||height>crag.maxY)continue;
+  const t=clamp01(depth),dx=Math.cos(angle),dz=Math.sin(angle)*.76;
+  const centerX=-.38*smooth(.08,.93,t)+.11*Math.sin(Math.PI*t),centerZ=-.13*smooth(.14,.94,t);
+  const dip=(.033*Math.sin(angle-.4)+.024*Math.cos(angle*2+.6))*Math.sin(Math.PI*t);
+  const core=coreRadius(clamp01(t+dip));
+  let radius=core;
+  for(const planes of crags){
     let near=0,far=Infinity;
-    for(const [nx,ny,nz,limit] of crag.planes){
+    for(const [nx,ny,nz,limit]of planes){
       const remaining=limit-nx*centerX-ny*height-nz*centerZ,velocity=nx*dx+nz*dz;
       if(Math.abs(velocity)<1e-10){if(remaining<0){far=-1;break;}continue;}
       const hit=remaining/velocity;
       if(velocity>0)far=Math.min(far,hit);else near=Math.max(near,hit);
       if(near>far)break;
     }
-    if(far>=near&&Number.isFinite(far))radius=Math.max(radius,far);
+    if(far>=near&&Number.isFinite(far)){
+      // A tangent ray has zero thickness. Let that wedge grow continuously
+      // from the common bedrock instead of jumping to a distant outer face;
+      // a hard maximum here produces false horizontal staircase ledges.
+      const middle=(near+far)*.5;
+      let embedded=Infinity;
+      for(const [nx,ny,nz,limit,inverseLength]of planes){
+        const distance=limit-nx*(centerX+dx*middle)-ny*height-nz*(centerZ+dz*middle);
+        embedded=Math.min(embedded,distance*inverseLength);
+      }
+      const joined=core+(far-core)*smooth(0,.38,embedded);
+      radius=Math.max(radius,joined);
+    }
   }
-  return {radius,centerX,centerZ};
+  // Fine unequal strata bend across neighboring wedges, with a few locally
+  // projecting lips. Low amplitude leaves the principal fracture planes clear.
+  const reveal=smooth(.045,.15,t)*(1-smooth(.80,.99,t));
+  const bed=height+.34*dx*radius+.22*dz*radius;
+  const strata=coherentNoise3D(dx*radius*.63+7.1,bed*3.2,dz*radius*.63-3.4)*.055;
+  radius+=strata*reveal;
+  // Fixed attachment at the top; the meadow does not grow a broad smooth
+  // collar, and all irregular crags resolve into the same enclosed bottom.
+  const rim=1-smooth(.006,.038,t),tip=smooth(.89,1,t);
+  radius=radius*(1-rim)+6.8*rim;
+  radius=radius*(1-tip)+coreRadius(t)*tip;
+  return {radius:Math.max(.13,radius),centerX,centerZ};
 }
