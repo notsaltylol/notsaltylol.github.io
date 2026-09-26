@@ -65,15 +65,50 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     // A hollow on the lake-facing flank separates the long sunward shoulder
     // from the quieter approach saddle. The keep remains above every rib.
     h -= .39*Math.exp(-((x+1.93-.26*(z+.62))**2/.32+(z+.62)**2/1.05));
-    if(h>2.39)h=2.39+.15*(1-Math.exp(-(h-2.39)/.15));
-    // Keep the exact anchor and a physically buildable central keep footprint.
-    // The smaller irregular bench blends into a ridge instead of a flat mesa.
-    const benchX=Math.max(.68,1.38/scale),benchZ=Math.max(.59,1.38/scale);
+    const originalUpland=h;
+    // A narrow summit rises between two unequal shoulders. The long western
+    // spur and the cut on the lake side make the castle cap an ascending rock
+    // silhouette. The field ends before the meadow rim or the lake basin.
+    const summitDistance=Math.hypot(dx,dz),summitMask=1-smooth(1.80,2.35,summitDistance);
+    const summitLift=.64*Math.exp(-((dx+.34*dz)**2/.90+dz*dz/.70));
+    const westShoulder=.26*Math.exp(-((dx+1.08+.48*(dz-.60))**2/.24+(dz-.60)**2/.92));
+    const eastCleft=.22*Math.exp(-((dx-.89+.15*(dz-.58))**2/.14+(dz-.58)**2/.52));
+    h+=(summitLift+westShoulder-eastCleft)*summitMask;
+    const cap=2.39+.50*summitMask;
+    if(h>cap)h=cap+.15*(1-Math.exp(-(h-cap)/.15));
+    // A compact upper shoulder descends into the larger mountain. Preserve
+    // the settlement's physical bearing area below so its gateway and paving
+    // still meet the ground as the surrounding ridge becomes steeper.
+    const benchX=Math.max(.50,1.38/scale),benchZ=Math.max(.48,1.38/scale);
     const benchAngle=Math.atan2(dz,dx);
     const benchDistance=Math.hypot((dx+.10*dz)/benchX,dz/benchZ)
       /(1+.075*Math.sin(benchAngle*3+.4)+.035*Math.cos(benchAngle*5));
-    const terrace = Math.max(1-smooth(1,1.80,benchDistance),1-smooth(1.35/scale,1.50/scale,Math.hypot(dx,dz)));
-    h = h * (1 - terrace) + 2.78 * terrace;
+    const terrace = Math.max(1-smooth(1,1.90,benchDistance),1-smooth(1.35/scale,1.50/scale,summitDistance));
+    const shoulderDrop=.10*(1-Math.exp(-((Math.max(0,summitDistance-1.50/scale)/.50)**2)));
+    h = h * (1 - terrace) + (3.35-shoulderDrop) * terrace;
+    const oldX=Math.max(.68,1.38/scale),oldZ=Math.max(.59,1.38/scale);
+    const oldDistance=Math.hypot((dx+.10*dz)/oldX,dz/oldZ)
+      /(1+.075*Math.sin(benchAngle*3+.4)+.035*Math.cos(benchAngle*5));
+    const oldTerrace=Math.max(1-smooth(1,1.80,oldDistance),1-smooth(1.35/scale,1.50/scale,summitDistance));
+    const oldHill=originalUpland>2.39?2.39+.15*(1-Math.exp(-(originalUpland-2.39)/.15)):originalUpland;
+    const oldHeight=oldHill*(1-oldTerrace)+2.78*oldTerrace;
+    // One long southwest shoulder carries the oblique approach. Extending
+    // only this sector breaks the circular collar below the protected court.
+    const approachAngle=Math.atan2(Math.sin(benchAngle-2.21),Math.cos(benchAngle-2.21));
+    const approachSector=Math.exp(-((approachAngle/.64)**2));
+    const precinctLock=1-smooth(8.6/scale,(10.0+8*approachSector)/scale,summitDistance);
+    h=h*(1-precinctLock)+(oldHeight+.57)*precinctLock;
+    // A narrow rising ledge supports the last traverse into the gateway. Its
+    // grade is independent of the steeper bare face below. Begin the blend
+    // on the already level court so it cannot form a lip across the road.
+    const entryAngle=Math.atan2(Math.sin(benchAngle-1.85),Math.cos(benchAngle-1.85));
+    const entryShoulder=Math.exp(-((entryAngle/.88)**6))
+      *smooth(.55,.72,summitDistance)*(1-smooth(1.12,1.44,summitDistance));
+    const entryGrade=3.35-.65*Math.max(0,summitDistance-.68);
+    if(scale>2)h+=Math.max(0,entryGrade-h)*entryShoulder;
+    // End before the meadow rim and restore distant terrain exactly, including
+    // the wider bearing pad used by small-scale previews.
+    h=oldHeight+(h-oldHeight)*summitMask;
     const shoreDistance=localLakeDistance(x,z);
     // A shallow natural bank contains the lake where the underlying rolling
     // meadow dips just below water level. The outlet is excavated afterward.
@@ -85,17 +120,32 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     return h * (1 - excavation) + .55 * excavation;
   }
   const height = (x, z) => localHeight(x / scale, z / scale) * verticalScale;
-  function rockExposure(x,z){
-    const lx=x/scale,lz=z/scale,d=Math.hypot(lx+3.1,lz+1.7);
-    const mountain=(1-smooth(2.05,2.70,d))*smooth(.72,1.02,d);
+  function localRockExposure(lx,lz,normalY){
+    const d=Math.hypot(lx+3.1,lz+1.7);
+    const mountain=(1-smooth(2.05,2.70,d))*smooth(.54,.84,d);
     if(mountain===0)return 0;
-    const e=.012,dx=(localHeight(lx+e,lz)-localHeight(lx-e,lz))/(2*e);
+    const dxHill=lx+3.1,dzHill=lz+1.7;
+    // Turf follows the rounded rib between two steep faces, joining back into
+    // the low meadow instead of surrounding the summit with one tan apron.
+    const grassyRib=Math.exp(-((dxHill+.35*(dzHill-.55)+.38)**2/.12+(dzHill-.8)**2/1.30))
+      *smooth(.30,.60,normalY);
+    return mountain*Math.max(1-smooth(.58,.82,normalY),smooth(.06,.27,uplandRibs(lx,lz))*.28)*(1-.80*grassyRib);
+  }
+  function rockExposure(x,z){
+    const lx=x/scale,lz=z/scale,e=.012;
+    const distance=Math.hypot(lx+3.1,lz+1.7);
+    if(distance<=.54||distance>=2.70)return 0;
+    const dx=(localHeight(lx+e,lz)-localHeight(lx-e,lz))/(2*e);
     const dz=(localHeight(lx,lz+e)-localHeight(lx,lz-e))/(2*e);
-    const normalY=1/Math.sqrt(1+dx*dx+dz*dz);
-    return mountain*Math.max(1-smooth(.58,.82,normalY),smooth(.06,.27,uplandRibs(lx,lz))*.28);
+    return localRockExposure(lx,lz,1/Math.sqrt(1+dx*dx+dz*dz));
   }
   const castleAnchor = new THREE.Vector3(-3.1 * scale, height(-3.1 * scale, -1.7 * scale), -1.7 * scale);
-  const trail = new THREE.CatmullRomCurve3([[-.8,2.8],[-2.5,2.1],[-3.8,.9],[-2.7,-.25],[-3.1,-1.7]].map(([x,z]) => new THREE.Vector3(x * scale, 0, z * scale)));
+  // The upper route climbs the long western shoulder, then traverses toward
+  // the gate. Crossing the contours avoids a straight road up the steep face.
+  const trailPoints=scale>2
+    ?[[-.8,2.8],[-2.5,2.1],[-3.8,.9],[-4.28,.30],[-3.88,-.19],[-3.52,-.61],[-3.42,-.79],[-2.88,-.82],[-3.1,-1.7]]
+    :[[-.8,2.8],[-2.5,2.1],[-3.8,.9],[-2.7,-.25],[-3.1,-1.7]];
+  const trail = new THREE.CatmullRomCurve3(trailPoints.map(([x,z]) => new THREE.Vector3(x * scale, 0, z * scale)));
   const trailSteps = Math.max(100, Math.min(1200, Math.round(100 * scale)));
   const trailSamples = trail.getPoints(trailSteps);
   const trailSegments = trailSamples.slice(1).map((b, i) => {
@@ -234,11 +284,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const meadowNormals=meadowGeometry.attributes.normal;
   for(let i=0;i<positions.length;i+=3){
     const x=positions[i]/scale,z=positions[i+2]/scale;
-    const summitDistance=Math.hypot(x+3.1,z+1.7);
-    const mountain=(1-smooth(2.05,2.70,summitDistance))*smooth(.72,1.02,summitDistance);
-    const steep=1-smooth(.58,.82,meadowNormals.getY(i/3));
-    const ribs=smooth(.06,.27,uplandRibs(x,z));
-    exposedRock.push(mountain*Math.max(steep,ribs*.28));
+    exposedRock.push(localRockExposure(x,z,meadowNormals.getY(i/3)));
   }
   meadowGeometry.setAttribute('terrainRock',new THREE.Float32BufferAttribute(exposedRock,1));
   const meadowMaterial=materials.meadow||materials.grass;

@@ -52,6 +52,7 @@ scene.add(ambient,sunlight,sunlight.target);
 const terrain = buildTerrain(THREE,m,{scale:LAND_SCALE,
  reservedAreas:[{x:-3.1*LAND_SCALE,z:-1.7*LAND_SCALE,radius:11.3}]
 }); scene.add(terrain.group);
+palette.setSummitAnchor(terrain.castleAnchor);
 const landscapeDetails = buildLandscapeDetails(THREE,m,terrain); scene.add(landscapeDetails.group);
 const botany = buildBotany(THREE,m,terrain); scene.add(botany.group);
 const castle = buildCastle(THREE,m); castle.scale.setScalar(.64);

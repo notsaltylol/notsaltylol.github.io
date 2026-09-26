@@ -82,6 +82,7 @@ const PIGMENT_GLSL = /* glsl */`
   uniform vec2 uCloudSlope;
   uniform vec2 uCloudDrift;
   uniform vec3 uLookoutAnchor;
+  uniform vec3 uSummitAnchor;
   uniform vec3 uPaintShadow;
   uniform vec3 uPaintMoss;
   uniform vec3 uUplandRock;
@@ -124,7 +125,7 @@ const PIGMENT_GLSL = /* glsl */`
     float cover = max(exp(-dot(a,a)), max(exp(-dot(b,b)), exp(-dot(c,c))));
     cover = smoothstep(0.23, 0.78, cover);
     // A break in the clouds leaves the summit/approach and travelers in light.
-    vec2 summit = vec2(-3.1, -1.7) - 2.78 * uCloudSlope;
+    vec2 summit = uSummitAnchor.xz - uSummitAnchor.y * uCloudSlope;
     vec2 lookout = uLookoutAnchor.xz - uLookoutAnchor.y * uCloudSlope;
     float summitOpening = 1.0 - smoothstep(0.55, 1.35, length((p-summit)/vec2(2.6,2.2)));
     float lookoutOpening = 1.0 - smoothstep(0.30, 1.15, length((p-lookout)/vec2(1.4,0.8)));
@@ -255,6 +256,7 @@ export function createMaterials(THREE) {
     uLandscapeScale:{value:1},uCloudStrength:{value:0},
     uCloudSlope:{value:new THREE.Vector2(28/25,8/25)},uCloudDrift:{value:new THREE.Vector2()},
     uLookoutAnchor:{value:new THREE.Vector3(-6.9,-3.3,10.45)},
+    uSummitAnchor:{value:new THREE.Vector3(-3.1,2.78,-1.7)},
     uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
     uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 },
     uRockTexture:{ value:whiteFallback() }, uRockEnabled:{ value:0 },
@@ -508,7 +510,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v14-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v15-${surface}`;
     materials[key] = material;
   }
 
@@ -887,6 +889,11 @@ export function createMaterials(THREE) {
       throw new TypeError('Lookout anchor must have finite world coordinates');
     shared.uLookoutAnchor.value.copy(position).divideScalar(shared.uLandscapeScale.value);
   }
+  function setSummitAnchor(position) {
+    if (!position || !Number.isFinite(position.x + position.y + position.z))
+      throw new TypeError('Summit anchor must have finite world coordinates');
+    shared.uSummitAnchor.value.copy(position).divideScalar(shared.uLandscapeScale.value);
+  }
   function animateLight(phase) {
     const cycle=((phase%1)+1)%1,angle=cycle*Math.PI*2;
     shared.uCloudDrift.value.set(Math.sin(angle)*0.18,(1-Math.cos(angle))*0.10);
@@ -900,5 +907,5 @@ export function createMaterials(THREE) {
     shared.uLandscapeScale.value=Math.max(0.001,horizontal);
   }
   setStyle('fantasy');
-  return { materials, setStyle, animate, animateLight, setSunDirection, setLookoutAnchor, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
+  return { materials, setStyle, animate, animateLight, setSunDirection, setLookoutAnchor, setSummitAnchor, setWorldScale, loadMeadowTexture, loadRockTexture, setSkyTexture, styleInfo };
 }

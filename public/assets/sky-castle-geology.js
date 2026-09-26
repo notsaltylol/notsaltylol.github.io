@@ -183,7 +183,7 @@ function structuralRelief(angle,depth,height,radius){
 }
 
 /** Radial envelope of connected oblique crags, in unscaled island units. */
-export function cliffFormation(angle,depth,height=1.14-6.34*depth){
+function inscriptionFormation(angle,depth,height=1.14-6.34*depth){
   const t=clamp01(depth),dx=Math.cos(angle),dz=Math.sin(angle)*.76;
   const centerX=-.38*smooth(.08,.93,t)+.11*Math.sin(Math.PI*t),centerZ=-.13*smooth(.14,.94,t);
   const dip=(.033*Math.sin(angle-.4)+.024*Math.cos(angle*2+.6))*Math.sin(Math.PI*t);
@@ -224,5 +224,136 @@ export function cliffFormation(angle,depth,height=1.14-6.34*depth){
   const rim=1-smooth(.006,.038,t),tip=smooth(.89,1,t);
   radius=radius*(1-rim)+6.8*rim;
   radius=radius*(1-tip)+coreRadius(t)*tip;
+  return {radius:Math.max(.13,radius),centerX,centerZ};
+}
+
+
+// The upper bedrock is continuous, but its lower body is divided into unequal
+// substantial, joined masses. The gaps between these masses are geological
+// clefts; their roots remain joined to the fixed meadow roof above them.
+const hangingMasses = [
+  // Unequal neighboring roots group into broader, joined escarpments.
+  // center; breadth / height / depth; yaw; lean; foot cut
+  [-5.10,-.45,1.40, 1.10,1.50,1.30, -.29,.12,-.07,1.05],
+  [-3.08,-1.00,2.78, 1.89,2.07,1.15, -.06,-.13,.08,1.70],
+  [-.20,-.90,3.70, .95,1.86,.85, .35,.12,-.07,1.55],
+  [2.70,-.35,2.90, 1.10,1.90,1.00, -.36,-.14,.04,.70],
+  [5.00,-.60,.60, 1.15,1.45,1.40, .28,-.13,-.06,1.55],
+  [4.10,-.20,-2.30, 1.40,1.30,1.05, -.21,.11,.08,.95],
+  [1.00,-.90,-3.40, 1.40,2.00,1.05, .34,-.14,-.11,1.21],
+  [-2.20,-.50,-3.10, 1.30,1.70,1.15, -.12,-.16,.09,1.01],
+  [-4.70,-.50,-1.50, 1.20,1.90,1.20, -.38,.12,.10,1.16],
+].map(([x,y,z,sx,sy,sz,yaw,leanX,leanZ,foot],variant)=>{
+  const c=Math.cos(yaw),s=Math.sin(yaw),planes=[];
+  function plane(nx,ny,nz,cut){
+    const a=nx*c/sx-nz*s/sz,b=ny/sy-nx*leanX/sx-nz*leanZ/sz,d=nx*s/sx+nz*c/sz;
+    planes.push([a,b,d,cut+a*x+b*y+d*z,1/Math.hypot(a,b,d)]);
+  }
+  // Steep sides and one broad oblique shoulder distinguish an escarpment from
+  // a conical radial lobe. The irregular plan is shared through its whole root.
+  const turns=[-.08,1.03,2.44,3.57,4.69,5.61];
+  turns.forEach((a,i)=>plane(Math.cos(a),-(.13+((i+variant*2)%4)*.035),Math.sin(a),.86+((i*3+variant)%5)*.031));
+  plane(.06,1,-.11,1.14);
+  // Keep the natural upper face that already carries the inscription. Its
+  // lower mass can move inward independently without a rectangular name patch.
+  if(variant===1)planes.splice(0,planes.length,...crags[1].slice(0,6));
+  // Three shallow unequal fracture faces close a broad blunt foot. None is a
+  // horizontal box cap, and they do not all converge into a repeated spike.
+  plane(.78,-1,.29,foot);
+  plane(-.63,-1,.66,foot+.13);
+  plane(.32,-1,-.87,foot+.21);
+  plane(Math.cos(1.81+variant*.51),-.34,Math.sin(1.81+variant*.51),1.02);
+  const slide=variant===1?.68:.31;
+  return {planes,slideX:-x*slide,slideZ:-z*slide,
+    slideStart:variant===1?-1.0:-.55,slideEnd:y-sy*(variant===1?1.70:1.15)};
+});
+const hangingCoreProfile=[[0,6.8],[.032,6.59],[.085,5.77],[.16,3.88],[.26,2.20],[.43,1.21],[.62,.86],[.80,.58],[.92,.31],[1,.1768]];
+function hangingCoreRadius(t){
+  for(let i=1;i<hangingCoreProfile.length;i++)if(t<=hangingCoreProfile[i][0]){
+    const [a,ra]=hangingCoreProfile[i-1],[b,rb]=hangingCoreProfile[i];
+    return mix(ra,rb,clamp01((t-a)/(b-a)));
+  }
+  return .1768;
+}
+
+// Fault families divide the larger faces into joined subsidiary buttresses.
+// Their breadth is measured in major rock masses, not physical-size erosion.
+const hangingClefts=[
+  [1.97,.17,1.32,.15,.31,.90],
+  [4.13,.20,1.12,-.19,.17,.72],
+  [.16,.16,.91,.13,.21,.77],
+];
+const hangingLedges=[
+  [2.51,.44,-1.78,.15,.19,-.13],
+  [.40,.39,-.85,.13,-.16,.20],
+  [4.31,.51,-2.28,.18,.22,.09],
+];
+
+/** Connected hanging escarpments, with the exact rim and fitted name face. */
+export function cliffFormation(angle,depth,height=1.14-6.34*depth){
+  const t=clamp01(depth),dx=Math.cos(angle),dz=Math.sin(angle)*.76;
+  const centerX=-.38*smooth(.08,.93,t)+.11*Math.sin(Math.PI*t),centerZ=-.13*smooth(.14,.94,t);
+  const dip=(.027*Math.sin(angle-.4)+.021*Math.cos(angle*2+.6))*Math.sin(Math.PI*t);
+  const core=hangingCoreRadius(clamp01(t+dip));
+  let radius=core;
+  for(const mass of hangingMasses){
+    const {planes,slideX,slideZ,slideStart,slideEnd}=mass;
+    const descend=smooth(slideStart,slideEnd,height);
+    const rayX=centerX-slideX*descend,rayZ=centerZ-slideZ*descend;
+    let near=0,far=Infinity;
+    for(const [nx,ny,nz,limit]of planes){
+      const remaining=limit-nx*rayX-ny*height-nz*rayZ,velocity=nx*dx+nz*dz;
+      if(Math.abs(velocity)<1e-10){if(remaining<0){far=-1;break;}continue;}
+      const hit=remaining/velocity;
+      if(velocity>0)far=Math.min(far,hit);else near=Math.max(near,hit);
+      if(near>far)break;
+    }
+    if(far>=near&&Number.isFinite(far)){
+      const middle=(near+far)*.5;let embedded=Infinity;
+      for(const [nx,ny,nz,limit,inverseLength]of planes){
+        const distance=limit-nx*(rayX+dx*middle)-ny*height-nz*(rayZ+dz*middle);
+        embedded=Math.min(embedded,distance*inverseLength);
+      }
+      // Blend tangent intersections into the narrow structural spine instead
+      // of growing detached surface fins at the edge of a distant mass.
+      const joined=core+(far-core)*smooth(0,.16,embedded);
+      radius=Math.max(radius,joined);
+    }
+  }
+  for(const [azimuth,breadth,cut,drift,start,end]of hangingClefts){
+    const along=smooth(start,start+.12,t)*(1-smooth(end-.12,end,t));
+    const jointCenter=azimuth+drift*clamp01((t-start)/(end-start));
+    const across=clamp01(1-Math.abs(angularDistance(angle,jointCenter))/breadth);
+    radius=Math.max(core*.80,radius-cut*across*smooth(0,.22,across)*along);
+  }
+  radius+=structuralRelief(angle,t,height,radius)*.55;
+  // Roots are tucked inside the fixed meadow edge. Without this envelope an
+  // inward-leaning deep mass would flare outward above its shoulder and form
+  // unsupported horns beside the upper rim.
+  radius=Math.min(radius,6.8*(1-.22*t));
+  // A few dipping, partial ledges belong to individual masses. The large
+  // clefts come from the actual mass layout, not noise carved into a wide cone.
+  const rockX=dx*radius,rockZ=dz*radius;
+  for(const [azimuth,breadth,level,cut,slopeX,slopeZ]of hangingLedges){
+    const across=clamp01(1-Math.abs(angularDistance(angle,azimuth))/breadth);
+    const bed=height+slopeX*rockX+slopeZ*rockZ;
+    radius-=cut*smooth(0,.25,across)*smooth(level-.34,level-.18,bed)*(1-smooth(level+.025,level+.12,bed));
+  }
+  const reveal=smooth(.045,.15,t)*(1-smooth(.80,.99,t));
+  const bed=height+.34*dx*radius+.22*dz*radius;
+  radius+=coherentNoise3D(dx*radius*.63+7.1,bed*3.2,dz*radius*.63-3.4)*.055*reveal;
+
+  // Evaluate the previous formation only where the fitted masonry letters
+  // need their established face and normals. This is a narrow spatial band,
+  // not a broad smooth panel filling the clefts beneath the inscription.
+  if(height> -1.10&&height< -.08&&dx<-.08&&dx>-.9&&dz>.30){
+    const original=inscriptionFormation(angle,t,height),x=dx*original.radius+original.centerX;
+    const horizontal=smooth(-4.75,-4.35,x)*(1-smooth(-1.65,-1.25,x));
+    const vertical=smooth(-1.10,-.84,height)*(1-smooth(-.30,-.08,height));
+    radius=mix(radius,original.radius,horizontal*vertical);
+  }
+  const rim=1-smooth(.006,.038,t),tip=smooth(.89,1,t);
+  radius=mix(radius,6.8,rim);
+  radius=mix(radius,hangingCoreRadius(t),tip);
   return {radius:Math.max(.13,radius),centerX,centerZ};
 }
