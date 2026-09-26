@@ -1,4 +1,4 @@
-import { buildTree } from './sky-castle-models.js';
+import { buildTree, createHippedRoofGeometry } from './sky-castle-models.js';
 
 /**
  * A small hilltop precinct around the existing keep. All dimensions are world
@@ -103,7 +103,11 @@ export function buildAcropolis(THREE, materials, terrain) {
     const c=Math.cos(yaw),s=Math.sin(yaw),count=heights.length,unit=length/count;
     for(let i=0;i<count;i++){
       const x=a[0]+dx*(i+.5)/count,z=a[1]+dz*(i+.5)/count;
-      const base=Math.min(ground(x,z),ground(x-s*width,z-c*width))-.055;
+      const base=ground(x,z)-.045;
+      let foot=base-.02;
+      for(const along of [-1,1])for(const across of [-1,1])foot=Math.min(foot,
+        ground(x+c*along*unit*.52+s*across*width*.52,z-s*along*unit*.52+c*across*width*.52)-.06);
+      if(foot<base-.025)stamp(block,'stone',[x,(foot+base+.06)/2,z],[unit-.008,base+.06-foot,width+.03],[0,yaw,0]);
       const rows=Math.max(1,Math.round(heights[i]/.19));
       for(let row=0;row<rows;row++){
         const cuts=row%2?[0,.36,1]:[0,.66,1];
@@ -126,32 +130,62 @@ export function buildAcropolis(THREE, materials, terrain) {
   ruinWall([-5.18,1.0],[-4.72,3.73],[.43,.60,.79,.56,.26],.47);
   ruinWall([-4.72,3.73],[-2.82,4.10],[.28,.46,.43,.25],.40);
 
-  // Stone paving is restricted to circulation and a small gathering place.
-  // Uneven islands of paving allow the meadow to run into the architecture.
-  function pavedPatch(points,key='stone') {
-    const shape=new THREE.Shape();
-    points.forEach(([x,z],i)=>i?shape.lineTo(x,-z):shape.moveTo(x,-z));shape.closePath();
-    const g=geometry(new THREE.ShapeGeometry(shape));g.rotateX(-Math.PI/2);
-    const p=g.attributes.position;
-    for(let i=0;i<p.count;i++)p.setY(i,ground(p.getX(i),p.getZ(i))+.023);
-    g.computeVertexNormals();stamp(g,key,[0,0,0]);
+  // Individual small flags share a connected footprint. Each corner follows
+  // the ground, so neither the court nor a winding path becomes a floating
+  // polygon when the natural hill changes under the precinct.
+  let pavingStones=0;
+  function flag(corners,key='stone',offset=.025) {
+    const top=corners.map(([x,z])=>[x,ground(x,z)+offset,z]);
+    const bottom=corners.map(([x,z])=>[x,ground(x,z)-.035,z]);
+    const p=[],uv=[],index=[];
+    for(const v of [...top,...bottom]){p.push(...v);uv.push(v[0],v[2]);}
+    index.push(0,2,1,0,3,2,4,5,6,4,6,7);
+    for(let i=0;i<4;i++){const j=(i+1)%4;index.push(i,j,i+4,j,j+4,i+4);}
+    const g=geometry(new THREE.BufferGeometry());g.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+    g.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));g.setIndex(index);g.computeVertexNormals();
+    stamp(g,key,[0,0,0]);pavingStones++;
   }
-  pavedPatch([[-1.36,1.0],[-.56,.72],[1.34,.95],[2.10,1.46],[2.0,2.04],[1.33,2.3],[.72,2.10],[.31,2.54],[-.61,2.39],[-1.55,1.73]]);
-  pavedPatch([[-3.45,-.18],[-2.12,-.35],[-1.64,.27],[-1.54,1.17],[-2.41,1.45],[-3.39,.95]]);
+  function paveCurve(points,halfWidth=.28) {
+    const curve=new THREE.CatmullRomCurve3(points.map(([x,z])=>new THREE.Vector3(x,0,z)));
+    const rows=Math.ceil(curve.getLength()/.24),columns=Math.max(2,Math.round(halfWidth*2/.23));
+    function corner(t,u){const p=curve.getPointAt(t),d=curve.getTangentAt(t);return[p.x+d.z*u,p.z-d.x*u];}
+    for(let row=0;row<rows;row++)for(let col=0;col<columns;col++){
+      const t0=(row+.022)/rows,t1=(row+.978)/rows;
+      const u0=-halfWidth+(col+.025)*halfWidth*2/columns,u1=-halfWidth+(col+.975)*halfWidth*2/columns;
+      flag([corner(t0,u0),corner(t0,u1),corner(t1,u1),corner(t1,u0)]);
+    }
+    return curve;
+  }
+  function pavedCourt(outline) {
+    const inside=(x,z)=>{let hit=false;for(let i=0,j=outline.length-1;i<outline.length;j=i++){
+      const a=outline[i],b=outline[j];if((a[1]>z)!==(b[1]>z)&&x<(b[0]-a[0])*(z-a[1])/(b[1]-a[1])+a[0])hit=!hit;
+    }return hit;};
+    for(let row=0;row<8;row++)for(let col=0;col<13;col++){
+      const x=-1.9+col*.29+(row%2)*.145,z=.63+row*.23;
+      const corners=[[x+.007,z+.007],[x+.283,z+.007],[x+.283,z+.223],[x+.007,z+.223]];
+      if(corners.every(p=>inside(...p)))flag(corners,'stone',.027);
+    }
+  }
+  pavedCourt([[-1.42,.65],[1.20,.66],[1.92,1.20],[1.70,2.08],[.68,2.36],[-.78,2.26],[-1.73,1.67]]);
+  paveCurve([[-1.25,1.62],[-2.14,1.00],[-2.98,.40],[-2.98,-.40],[-2.78,-.93]],.21);
+  paveCurve([[-1.14,1.04],[-1.20,.40],[-1.20,-.08]],.22);
+  paveCurve([[1.22,1.62],[1.84,.85],[1.94,.06]],.22);
 
   // The old entrance still follows the original trail. Its voussoir arch is
   // open in both directions; one pier and a short wall survive above the other.
-  const gateZ=5.15;let gateX=1.15,gateDistance=Infinity;
+  const gateZ=5.15;let gateX=1.15,gateDistance=Infinity,entryX=1.15,entryDistance=Infinity;
   if(terrain.trail)for(const p of terrain.trail.getPoints(800)){
     const dx=p.x-anchor.x,dz=p.z-anchor.z,x=cosine*dx-sine*dz,z=sine*dx+cosine*dz;
     if(Math.abs(z-gateZ)<gateDistance){gateDistance=Math.abs(z-gateZ);gateX=x;}
+    if(Math.abs(z-7.8)<entryDistance){entryDistance=Math.abs(z-7.8);entryX=x;}
   }
   gateX=Math.max(-3.2,Math.min(3.2,gateX));
-  const gateBase=ground(gateX,gateZ)-.025,opening=.59,spring=.72,ring=.23;
+  const gateBase=Math.max(ground(gateX,gateZ),ground(gateX-.75,gateZ),ground(gateX+.75,gateZ))+.015,opening=.59,spring=.72,ring=.23;
   for(const side of [-1,1]){
     const x=gateX+side*(opening+ring*.5);
     for(let row=0;row<4;row++)stamp(wornBlock,'stone',[x,gateBase+(row+.5)*.19,gateZ],[ring+.035,.184,.48]);
-    stamp(block,'stone',[x,gateBase+.065,gateZ],[.39,.16,.65]);
+    const foot=ground(x,gateZ)-.07;
+    stamp(masonryBlock,'stone',[x,(foot+gateBase+.13)/2,gateZ],[.39,gateBase+.13-foot,.65]);
   }
   for(let i=0;i<11;i++){
     const a=i/11*Math.PI+.006,b=(i+1)/11*Math.PI-.006;
@@ -164,28 +198,16 @@ export function buildAcropolis(THREE, materials, terrain) {
   ruinWall([gateX-.73,gateZ],[gateX-2.08,gateZ-.32],[1.50,1.31,.94],.48);
   ruinWall([gateX+.73,gateZ],[gateX+2.12,gateZ-.35],[.77,.56,.34],.46);
 
-  const approach=new THREE.CatmullRomCurve3([
-    new THREE.Vector3(gateX,0,7.8),new THREE.Vector3(gateX,0,gateZ),
-    new THREE.Vector3(gateX*.52,0,3.05),new THREE.Vector3(.20,0,1.95),new THREE.Vector3(.08,0,.74),
-  ]);
-  const pathP=[],pathU=[],pathI=[],pathSteps=72;
-  for(let i=0;i<=pathSteps;i++){
-    const t=i/pathSteps,p=approach.getPoint(t),tangent=approach.getTangent(t);
-    const width=.34+.055*Math.sin(t*17)+.026*Math.cos(t*39);
-    for(const side of [-1,1]){
-      const x=p.x+tangent.z*width*side,z=p.z-tangent.x*width*side;
-      pathP.push(x,ground(x,z)+.034,z);pathU.push((side+1)/2,t*6);
-    }
-    if(i<pathSteps){const a=i*2;pathI.push(a,a+2,a+1,a+1,a+2,a+3);}
-  }
-  const path=geometry(new THREE.BufferGeometry());path.setAttribute('position',new THREE.Float32BufferAttribute(pathP,3));
-  path.setAttribute('uv',new THREE.Float32BufferAttribute(pathU,2));path.setIndex(pathI);path.computeVertexNormals();stamp(path,'stone',[0,0,0]);
-  // A few broad displaced paving slabs, rather than a continuous bright border.
-  for(let i=0;i<17;i++){
-    const t=.12+i*.044,p=approach.getPoint(t),tangent=approach.getTangent(t),side=i%2?1:-1;
-    if(i%4===1)continue;
-    const x=p.x+tangent.z*side*.35,z=p.z-tangent.x*side*.35;
-    stamp(wornBlock,i%5===0?'rock':'stone',[x,ground(x,z)+.025,z],[.24,.042,.21],[.015,-Math.atan2(tangent.z,tangent.x)+(random()-.5)*.35,0]);
+  // The entrance neck meets the island's existing narrow limestone trail;
+  // inside the gate it widens into the small forecourt, with no detached slabs.
+  paveCurve([[entryX,7.8],[(entryX+gateX)/2,6.45],[gateX,5.15]],.20);
+  paveCurve([[gateX,5.17],[gateX*.68,3.78],[.24,2.36],[.08,.74]],.32);
+  // A supported threshold ties the gate piers together. Two shallow steps make
+  // any small cross-slope difference explicit instead of leaving an air gap.
+  for(let step=0;step<2;step++){
+    const z=gateZ+.21-step*.22,top=gateBase+.012+step*.016;
+    const bottom=Math.min(ground(gateX-.60,z),ground(gateX+.60,z))-.04;
+    stamp(masonryBlock,'stone',[gateX,(top+bottom)/2,z],[1.22,top-bottom,.25]);
   }
 
   function archedWindow(x,y,z,width,height,yaw=0,door=false) {
@@ -200,60 +222,111 @@ export function buildAcropolis(THREE, materials, terrain) {
       stamp(block,'dark',[px,y+height*.38,pz],[.008,height*.72,.016],[0,yaw,0]);
     }
   }
-  function roofedHouse(x,z,width,depth,height,rotation=0) {
+  function hipRoof(x,y,z,width,depth,rise,rotation=0,dormer=false) {
     const c=Math.cos(rotation),s=Math.sin(rotation),at=(u,v)=>[x+c*u+s*v,z-s*u+c*v];
-    const corners=[at(-width/2,-depth/2),at(width/2,-depth/2),at(width/2,depth/2),at(-width/2,depth/2)];
-    const grade=Math.max(...corners.map(([x,z])=>ground(x,z))),bottom=Math.min(...corners.map(([x,z])=>ground(x,z)))-.10;
-    const top=grade+height;
-    stamp(block,'stone',[x,(bottom+top)/2,z],[width,top-bottom,depth],[0,rotation,0]);
-    stamp(block,'rock',[x,grade+.045,z],[width+.045,.11,depth+.045],[0,rotation,0]);
-    // Large repaired plaster patches are implied by stone block faces around
-    // the edges; joints and quoins have plausible physical masonry dimensions.
-    for(let side of [-1,1]){
-      for(let row=0;row<Math.ceil(height/.20);row++){
-        const y=grade+.16+row*.20;if(y>top-.06)continue;
-        for(let i=0;i<Math.ceil(width/.46);i++){
-          const u=-width/2+(i+.5)*width/Math.ceil(width/.46),[xx,zz]=at(u,side*(depth/2+.005));
-          if(row%3===1&&i%3===1)continue;
-          stamp(block,'stoneLight',[xx,y,zz],[width/Math.ceil(width/.46)-.018,.012,.012],[0,rotation,0]);
-        }
+    const hip=Math.min(depth*.43,width*.22),ridge=width/2-hip;
+    stamp(geometry(createHippedRoofGeometry(THREE,{width,depth,rise,hip,thickness:.042})),
+      'roof',[x,y,z],[1,1,1],[0,rotation,0]);
+    stamp(block,'wood',[x,y-.043,z],[width-.036,.055,depth-.036],[0,rotation,0]);
+    const a=at(-ridge,0),b=at(ridge,0);beam([a[0],y+rise+.012,a[1]],[b[0],y+rise+.012,b[1]],.027,'roof');
+    // Overlapping courses end at the hips. Diagonal caps meet the ridge rather
+    // than drawing parallel bars past the roof's triangular end planes.
+    for(const side of [-1,1]){
+      for(let row=1;row<=5;row++){
+        const t=row/6,half=ridge+hip*t,p=at(-half,side*depth/2*t),q=at(half,side*depth/2*t);
+        beam([p[0],y+rise*(1-t)+.009,p[1]],[q[0],y+rise*(1-t)+.009,q[1]],.010,'roof');
       }
+      for(const end of [-1,1]){
+        const p=at(end*ridge,0),q=at(end*width/2,side*depth/2);
+        beam([p[0],y+rise+.012,p[1]],[q[0],y+.012,q[1]],.019,'roof');
+      }
+      const count=Math.ceil(width/.24);
+      for(let i=0;i<count;i++){
+        const p=at(-width/2+(i+.5)*width/count,side*(depth/2-.045));
+        stamp(block,'wood',[p[0],y-.075,p[1]],[.031,.075,.13],[0,rotation,0]);
+      }
+    }
+    if(dormer){
+      const p=at(-width*.12,depth*.23),base=y+rise*.32;
+      stamp(block,'stone',[p[0],base+.115,p[1]],[.30,.23,.30],[0,rotation,0]);
+      const front=at(-width*.12,depth*.23+.153);
+      archedWindow(front[0],base+.018,front[1],.13,.19,rotation);
+      stamp(geometry(createHippedRoofGeometry(THREE,{width:.40,depth:.38,rise:.16,hip:.045,thickness:.024})),
+        'roof',[p[0],base+.246,p[1]],[1,1,1],[0,rotation,0]);
+    }
+  }
+  function roofedHouse(x,z,width,depth,height,rotation=0,dormer=false) {
+    const c=Math.cos(rotation),s=Math.sin(rotation),at=(u,v)=>[x+c*u+s*v,z-s*u+c*v];
+    const samples=[];for(const u of [-.5,0,.5])for(const v of [-.5,0,.5]){const p=at(u*width,v*depth);samples.push(ground(...p));}
+    const grade=Math.max(...samples),bottom=Math.min(...samples)-.10,top=grade+height;
+    stamp(block,'stone',[x,(bottom+top)/2,z],[width,top-bottom,depth],[0,rotation,0]);
+    stamp(block,'stone',[x,grade+.045,z],[width+.055,.12,depth+.055],[0,rotation,0]);
+    stamp(block,'stoneLight',[x,top-.056,z],[width+.055,.045,depth+.055],[0,rotation,0]);
+    // Corner quoins, window sills and recessed timber shutters communicate
+    // construction. The middle of the plaster wall stays visually quiet.
+    for(const end of [-1,1])for(const side of [-1,1])for(let row=0;row<Math.ceil(height/.17);row++){
+      const p=at(end*(width/2-.047),side*(depth/2+.006));
+      const span=row%2?.14:.085;
+      stamp(masonryBlock,'stoneLight',[p[0],grade+.08+row*.17,p[1]],[span,.12,.035],[0,rotation,0]);
+    }
+    for(const side of [-1,1]){
       const count=Math.max(1,Math.round(width/.72));
       for(let i=0;i<count;i++){
-        const [xx,zz]=at((i-(count-1)/2)*.63,side*(depth/2+.012));
-        if(side<0||Math.abs((i-(count-1)/2)*.63-width*.27)>.30)
-          archedWindow(xx,grade+.43,zz,.16,Math.min(.35,height-.48),rotation+(side<0?Math.PI:0));
+        const u=(i-(count-1)/2)*.63,p=at(u,side*(depth/2+.012));
+        if(side>0&&Math.abs(u-width*.27)<=.30)continue;
+        archedWindow(p[0],grade+.43,p[1],.16,Math.min(.35,height-.48),rotation+(side<0?Math.PI:0));
+        const sill=at(u,side*(depth/2+.044));stamp(block,'stone',[sill[0],grade+.405,sill[1]],[.27,.036,.09],[0,rotation,0]);
+        if(i%2===0)for(const shutter of [-1,1]){
+          const q=at(u+shutter*.127,side*(depth/2+.020));
+          stamp(block,'wood',[q[0],grade+.555,q[1]],[.073,.24,.025],[0,rotation+shutter*.10,0]);
+        }
       }
     }
     const door=at(width*.27,depth/2+.014);archedWindow(door[0],grade+.035,door[1],.22,.52,rotation,true);
+    const frontGround=ground(...at(width*.27,depth/2+.46));
+    const steps=Math.max(2,Math.min(7,Math.ceil((grade+.038-frontGround)/.075)));
+    for(let step=0;step<steps;step++){
+      const t=(step+1)/steps,p=at(width*.27,depth/2+.12+(steps-step-1)*.14),floor=ground(...p)-.055;
+      const upper=Math.max(floor+.025,frontGround+(grade+.038-frontGround)*t);
+      stamp(masonryBlock,'stone',[p[0],(floor+upper)/2,p[1]],[.43,upper-floor,.165],[0,rotation,0]);
+    }
     for(const side of [-1,1]){
-      const gable=at(side*(width/2+.012),-.04);
-      archedWindow(gable[0],grade+height*.47,gable[1],.17,.31,rotation+side*Math.PI/2);
+      const p=at(side*(width/2+.012),-.04);
+      archedWindow(p[0],grade+height*.47,p[1],.17,.31,rotation+side*Math.PI/2);
     }
-    const rise=depth*.33,roofShape=new THREE.Shape();roofShape.moveTo(-depth/2-.10,0);
-    roofShape.lineTo(0,rise);roofShape.lineTo(depth/2+.1,0);roofShape.closePath();
-    const roof=geometry(new THREE.ExtrudeGeometry(roofShape,{depth:width+.18,bevelEnabled:false}));
-    const start=at(-(width+.18)/2,0);
-    stamp(roof,'roof',[start[0],top+.015,start[1]],[1,1,1],[0,rotation+Math.PI/2,0]);
-    for(const side of [-1,1])for(let row=1;row<=4;row++){
-      const t=row/5,aa=at(-width/2-.095,side*(depth/2+.1)*t),bb=at(width/2+.095,side*(depth/2+.1)*t);
-      beam([aa[0],top+.025+rise*(1-t),aa[1]],[bb[0],top+.025+rise*(1-t),bb[1]],.017,'roof');
+    const rise=depth*.40;
+    hipRoof(x,top+.015,z,width+.20,depth+.20,rise,rotation,dormer);
+    if(width>1.7){
+      const p=at(-width*.31,-depth*.14);
+      stamp(masonryBlock,'stone',[p[0],top+rise*.91,p[1]],[.18,.39,.21],[0,rotation,0]);
+      stamp(block,'dark',[p[0],top+rise*.91+.232,p[1]],[.11,.008,.14],[0,rotation,0]);
+      stamp(masonryBlock,'stoneLight',[p[0],top+rise*.91+.20,p[1]],[.24,.055,.27],[0,rotation,0]);
     }
-    // Only a few clay chimney stacks distinguish the inhabited wings.
-    if(width>1.7){const [xx,zz]=at(-width*.29,-depth*.12);stamp(wornBlock,'stone',[xx,top+rise*.87,zz],[.20,.45,.23],[0,rotation,0]);}
   }
   // Four low attached wings make the original tiny keep part of a coherent
   // monastery-like ensemble. None grows with the island or reaches its spire.
-  roofedHouse(-1.62,-.58,1.65,1.05,1.00,.04);
-  roofedHouse(.02,-1.44,2.62,1.08,1.24,0);
+  roofedHouse(-1.62,-.58,1.65,1.05,1.00,.04,true);
+  roofedHouse(.02,-1.44,2.62,1.08,1.24,0,true);
   roofedHouse(1.61,-.72,1.04,1.54,.96,-.07);
   roofedHouse(-3.00,-1.73,1.32,1.65,1.35,-.12);
 
   // An incomplete cloister links the chapel to a garden. The last broken arch
   // and foundation outline communicate former rooms, rather than a new fence.
-  const cloisterY=ground(-3.48,-.13)-.025;
+  const cloisterY=Math.max(...[-.46,.44,1.34,2.40].map(z=>ground(-3.38,z)))-.015;
   const cloister=archWall(1.04,1.14,.66,.93,.25);
-  for(let bay=0;bay<3;bay++)stamp(cloister,'stone',[-3.38,cloisterY,.10+bay*.89],[1,1,1],[0,Math.PI/2,0]);
+  for(let bay=0;bay<3;bay++){
+    const z=.10+bay*.89,floor=Math.min(ground(-3.38,z-.5),ground(-3.38,z+.5))-.06;
+    stamp(block,'stone',[-3.38,(floor+cloisterY+.02)/2,z],[.28,cloisterY+.02-floor,1.04]);
+    stamp(cloister,'stone',[-3.38,cloisterY,z],[1,1,1],[0,Math.PI/2,0]);
+  }
+  // The first two bays still shelter a real walk; the last stands open as a
+  // ruin. Inner posts and projecting eaves visibly support the surviving roof.
+  for(const z of [-.46,.24,1.20]){
+    const floor=ground(-2.69,z)-.04;
+    stamp(column,'stone',[-2.69,(floor+cloisterY+1.12)/2,z],[.047,cloisterY+1.12-floor,.047]);
+    stamp(masonryBlock,'stoneLight',[-2.69,cloisterY+1.095,z],[.16,.085,.16]);
+  }
+  hipRoof(-3.025,cloisterY+1.16,.20,2.40,.99,.26,Math.PI/2);
   ruinWall([-3.40,2.10],[-3.55,2.97],[.96,.58],.27);
   ruinWall([-3.45,-.5],[-5.00,-1.1],[.27,.46,.46,.28],.36);
   ruinWall([-5.00,-1.1],[-5.28,.26],[.27,.45,.64],.38);
@@ -299,7 +372,9 @@ export function buildAcropolis(THREE, materials, terrain) {
       stamp(wornBlock,'stone',[x+Math.sin(a)*(radius-.09),base+topAt(a)-.025,z+Math.cos(a)*(radius-.09)],
         [.20,.115,.27],[.025,a,.03*Math.sin(a*3)]);
     }
-    stamp(column,'stone',[x,base+.075,z],[radius+.085,.15,radius+.085]);
+    let foot=base-.03;
+    for(let i=0;i<20;i++){const a=i/20*Math.PI*2;foot=Math.min(foot,ground(x+Math.sin(a)*(radius+.10),z+Math.cos(a)*(radius+.10))-.065);}
+    stamp(column,'stone',[x,(foot+base+.15)/2,z],[radius+.085,base+.15-foot,radius+.085]);
   }
   ruinedTower(-4.40,-3.51,.61,1.61);
   ruinedTower(4.66,-2.91,.47,1.05);
@@ -337,7 +412,7 @@ export function buildAcropolis(THREE, materials, terrain) {
   const gate=world(gateX,gateZ);
   const bounds=new THREE.Box3().setFromObject(group),size=bounds.getSize(new THREE.Vector3());
   const stats={triangles,vertices,drawCalls:group.children.length,towers:2,pavilions:0,gateways:1,houses:4,
-    footprint:[size.x,size.z],maximumAddedHeight:bounds.max.y-anchor.y,gardenTrees:4,ivyLeaves,
+    footprint:[size.x,size.z],maximumAddedHeight:bounds.max.y-anchor.y,gardenTrees:4,ivyLeaves,pavingStones,
     gatePosition:[gate.x,gateBase,gate.z],clearingRadius:9.85};
   group.userData.kind='castle-precinct';
   return {group,reservedPositions,stats};

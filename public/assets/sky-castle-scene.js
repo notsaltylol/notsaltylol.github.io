@@ -182,14 +182,21 @@ if(inscription)word.forEach((letter,index)=>{
 // A painted environment surrounds the actual 3D terrain throughout the orbit.
 const atmosphere=createAtmosphere(THREE,{
  scale:LAND_SCALE,sunDirection:sunOffset.clone().normalize(),
- textureUrl:new URL('./sky-panorama-v1.png',import.meta.url).href
+ textureUrl:new URL('./sky-panorama-v2.png',import.meta.url).href
 });
 scene.add(atmosphere.group);
 
 // Soft mist at the waterfall foot is a small particle effect in 3D space.
 const mistTexture=document.createElement('canvas');mistTexture.width=mistTexture.height=64;const ctx=mistTexture.getContext('2d');const grad=ctx.createRadialGradient(32,32,0,32,32,32);grad.addColorStop(0,'rgba(255,255,255,.5)');grad.addColorStop(1,'rgba(255,255,255,0)');ctx.fillStyle=grad;ctx.fillRect(0,0,64,64);
-const mistMaterial=new THREE.SpriteMaterial({map:new THREE.CanvasTexture(mistTexture),color:0xe5f7ed,transparent:true,opacity:.32,depthWrite:false});
-const mists=[];for(let i=0;i<12;i++){const mist=new THREE.Sprite(mistMaterial);mist.scale.set(1.3*HEIGHT_SCALE,1.0*HEIGHT_SCALE,1);scene.add(mist);mists.push(mist);}
+const mistMap=new THREE.CanvasTexture(mistTexture);
+const mistMaterials=[.11,.17,.23].map(opacity=>new THREE.SpriteMaterial({map:mistMap,color:0xe5f7ed,transparent:true,opacity,depthWrite:false}));
+// Unequal thin spray veils overlap down the lower fall, rather than forming
+// one opaque ball at a fixed endpoint. Every drift returns after one orbit.
+const mists=[];for(let i=0;i<12;i++){
+ const mist=new THREE.Sprite(mistMaterials[i%3]);
+ mist.scale.set((.45+(i%4)*.19)*HEIGHT_SCALE,(.65+(i%3)*.19)*HEIGHT_SCALE,1);
+ scene.add(mist);mists.push(mist);
+}
 
 // Depth silhouettes and fine paper grain are applied once after the shared
 // three-dimensional scene is rendered.
@@ -213,7 +220,9 @@ window.castleStyles=Object.keys(STYLES);window.castleState={style:DEFAULT_STYLE,
 window.setStyle=(id,{persist=true}={})=>{
  if(!Object.hasOwn(STYLES,id))throw new Error('Unknown castle style: '+id);
  const preset=palette.setStyle(id);foregroundGrass.color.copy(m.grass.color).multiplyScalar(.78);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
- const fogRange={original:[32,100],fantasy:[35,110],ink:[36,110],cozy:[35,120],ghibli:[32,110]}[id];
+ // Separate the far landforms with aerial perspective. Nearby architecture
+ // keeps its full pigment contrast when the camera dollies into a close view.
+ const fogRange={original:[24,85],fantasy:[24,75],ink:[27,95],cozy:[24,90],ghibli:[22,80]}[id];
  scene.fog.near=fogRange[0]*LAND_SCALE;scene.fog.far=fogRange[1]*LAND_SCALE;
  document.body.style.backgroundColor=new THREE.Color(preset.fog).lerp(new THREE.Color(0xfffbf1),.66).getStyle();
  atmosphere.setStyle(preset,id);
@@ -259,7 +268,12 @@ window.renderFrame=phase=>{
   sunlight.shadow.normalBias=Math.max(.01,span*4/sunlight.shadow.mapSize.x);renderer.shadowMap.needsUpdate=true;shadowZoom=zoom;shadowFocus.copy(focus);
  }
  window.castleState.zoom=zoom;window.castleState.focus=focus.toArray();
- mists.forEach((mist,i)=>{const a=i*2.4+t;mist.position.set(terrain.lip.x+Math.sin(a)*.35*HEIGHT_SCALE,-5.8*HEIGHT_SCALE+Math.sin(t+i)*.18*HEIGHT_SCALE,terrain.lip.z+.5*HEIGHT_SCALE+Math.cos(a)*.20*HEIGHT_SCALE);});
+ mists.forEach((mist,i)=>{
+  const a=i*2.4+t,fall=(i+.5)/12;
+  mist.position.set(terrain.lip.x+Math.sin(a)*(.10+.24*fall)*LAND_SCALE,
+   terrain.waterLevel-(5.8+fall*1.5)*HEIGHT_SCALE+Math.sin(t+i)*.18*HEIGHT_SCALE,
+   terrain.lip.z+(.14+.30*fall+Math.cos(a)*.12)*LAND_SCALE);
+ });
  renderer.info.reset();renderer.setRenderTarget(target);renderer.render(scene,camera);renderer.setRenderTarget(null);renderer.render(postScene,postCamera);
  window.castleState.drawCalls=renderer.info.render.calls;window.castleState.triangles=renderer.info.render.triangles;
 };

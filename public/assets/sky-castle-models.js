@@ -109,6 +109,29 @@ function arcadeGeometry(THREE, width, height, depth, count, openingHeight) {
   return new THREE.ExtrudeGeometry(wall, { depth, bevelEnabled: false, curveSegments: 16 });
 }
 
+/** A closed four-sided hip roof; ridge runs along local X, eaves at y=0. */
+export function createHippedRoofGeometry(THREE,{width,depth,rise,hip=Math.min(depth*.45,width*.22),thickness=.035}) {
+  const x=width/2,z=depth/2,r=Math.max(.025,x-hip),p=[],uv=[];
+  const faces=[
+    [[-x,0,z],[x,0,z],[r,rise,0],[-r,rise,0]],
+    [[x,0,-z],[-x,0,-z],[-r,rise,0],[r,rise,0]],
+    [[x,0,z],[x,0,-z],[r,rise,0]],
+    [[-x,0,-z],[-x,0,z],[-r,rise,0]],
+    [[-x,-thickness,z],[x,-thickness,z],[x,0,z],[-x,0,z]],
+    [[x,-thickness,-z],[-x,-thickness,-z],[-x,0,-z],[x,0,-z]],
+    [[x,-thickness,z],[x,-thickness,-z],[x,0,-z],[x,0,z]],
+    [[-x,-thickness,-z],[-x,-thickness,z],[-x,0,z],[-x,0,-z]],
+    [[-x,-thickness,-z],[x,-thickness,-z],[x,-thickness,z],[-x,-thickness,z]],
+  ];
+  for(const face of faces)for(let i=1;i<face.length-1;i++)for(const v of [face[0],face[i],face[i+1]]){
+    p.push(...v);uv.push(v[0]/width+.5,v[2]/depth+.5);
+  }
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.Float32BufferAttribute(p,3));
+  geometry.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geometry.computeVertexNormals();
+  return geometry;
+}
+
 export function buildCastle(THREE, materials) {
   const work = createWorkshop(THREE, materials);
   const { add, box, cylinder, lathe, tube } = work;
@@ -127,7 +150,7 @@ export function buildCastle(THREE, materials) {
   foundation([[-1.48,-.83],[-.73,-1.08],[.79,-1.02],[1.43,-.49],[1.42,.63],[.88,1.01],[.32,1.08],[-.51,1.12],[-1.45,.67]],0,.18,'stone');
   foundation([[-1.25,-.78],[-.52,-.91],[.81,-.86],[1.21,-.38],[1.28,.49],[.72,.91],[-.54,.96],[-1.20,.55]],.16,.26,'stone');
   for (let i = 0; i < 7; i++) {
-    box('stoneLight', 0.12, 0.026 + i * 0.035, 1.20 - i * 0.082, 0.58, 0.052, 0.17);
+    box('stone', 0.12, 0.030 + i * 0.060, 1.20 - i * 0.082, 0.58, 0.060, 0.17);
   }
 
   function window(x, y, z, yaw, width = 0.16, height = 0.44) {
@@ -260,29 +283,26 @@ export function buildCastle(THREE, materials) {
     for (const level of [0.06, height - 0.035]) {
       box('stoneLight', x, y + level, z, width + 0.045, 0.046, depth + 0.055);
     }
-    const roofWidth = width + 0.12, roofDepth = depth + 0.15, rise = depth * 0.55;
-    const shape = new THREE.Shape();
-    shape.moveTo(-roofDepth / 2, 0);
-    shape.lineTo(roofDepth / 2, 0);
-    shape.lineTo(0, rise);
-    shape.closePath();
-    add(new THREE.ExtrudeGeometry(shape, { depth: roofWidth, bevelEnabled: false }), 'roof', [x - roofWidth / 2, y + height, z], [0, Math.PI / 2, 0], [1, 1, 1], true);
-    tube('gold', [[x - roofWidth / 2, y + height + rise + 0.005, z], [x + roofWidth / 2, y + height + rise + 0.005, z]], 0.018, 4);
-    // Raised tile courses catch the toon key light, giving each roof relief.
-    for (const side of [-1, 1]) {
-      for (let i = 1; i <= 4; i++) {
-        const t = i / 5;
-        tube('roof', [[x - roofWidth / 2, y + height + rise * (1 - t) + 0.01, z + side * roofDepth / 2 * t], [x + roofWidth / 2, y + height + rise * (1 - t) + 0.01, z + side * roofDepth / 2 * t]], 0.016, 4);
+    const roofWidth=width+.14,roofDepth=depth+.17,rise=depth*.55,hip=Math.min(roofDepth*.42,roofWidth*.22),ridge=roofWidth/2-hip;
+    add(createHippedRoofGeometry(THREE,{width:roofWidth,depth:roofDepth,rise,hip,thickness:.035}),
+      'roof',[x,y+height,z],[0,0,0],[1,1,1],true);
+    // Projecting timber soffits, stone cornices, and a capped ridge give roofs
+    // thickness and load-bearing edges instead of a plain triangular extrusion.
+    box('wood',x,y+height-.024,z,roofWidth-.035,.035,roofDepth-.035);
+    box('stoneLight',x,y+height-.067,z,width+.055,.048,depth+.055);
+    tube('roof',[[x-ridge,y+height+rise+.015,z],[x+ridge,y+height+rise+.015,z]],.026,4);
+    for(const side of [-1,1]){
+      for(let row=1;row<=5;row++){
+        const t=row/6,half=ridge+hip*t;
+        tube('roof',[[x-half,y+height+rise*(1-t)+.008,z+side*roofDepth/2*t],
+          [x+half,y+height+rise*(1-t)+.008,z+side*roofDepth/2*t]],.008,3);
       }
-      for (let row = 0; row < 5; row++) {
-        const start = row / 5, end = (row + 1) / 5;
-        const columns = Math.ceil(roofWidth / 0.16);
-        for (let tile = 1; tile < columns; tile++) {
-          const tx = x - roofWidth / 2 + (tile + (row % 2) * 0.5) * roofWidth / columns;
-          if (tx > x + roofWidth / 2 - 0.03) continue;
-          tube('roof', [[tx, y + height + rise * (1 - start) + 0.006, z + side * roofDepth / 2 * start], [tx, y + height + rise * (1 - end) + 0.006, z + side * roofDepth / 2 * end]], 0.006, 1);
-        }
+      for(let i=0;i<Math.ceil(width/.20);i++){
+        const xx=x-width/2+(i+.5)*width/Math.ceil(width/.20);
+        box('wood',xx,y+height-.049,z+side*(depth/2+.035),.028,.048,.11);
       }
+      for(const end of [-1,1])tube('roof',[[x+end*ridge,y+height+rise+.011,z],
+        [x+end*roofWidth/2,y+height+.011,z+side*roofDepth/2]],.015,2);
     }
     const count = Math.max(2, Math.floor(width / 0.37));
     for (let i = 0; i < count; i++) {
@@ -353,7 +373,7 @@ export function buildCastle(THREE, materials) {
   }
 
   for (let i = 0; i < 7; i++) {
-    const y = 0.052 + i * 0.035, z = 1.235 - i * 0.082;
+    const y = 0.061 + i * 0.060, z = 1.235 - i * 0.082;
     box('stone', 0.12, y, z, 0.56, 0.007, 0.017);
   }
 

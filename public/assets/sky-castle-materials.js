@@ -270,18 +270,24 @@ export function createMaterials(THREE) {
             float mass = paintNoise(pigmentPosition * vec3(0.042, 0.064, 0.042) + vec3(8.2, 2.7, 6.4));
             float fold = paintNoise(pigmentPosition * 0.073 + vec3(2.1, 8.4, 1.7));
             float beds = paintNoise(vec3(pigmentPosition.x * 0.028,
-              pigmentPosition.y * 0.27 + fold * 1.8, pigmentPosition.z * 0.028));
+              pigmentPosition.y * 0.17 + fold * 1.8, pigmentPosition.z * 0.028));
             float crag = rockFbm(geology * vec3(0.43, 0.19, 0.43), footprint * 0.61);
             vec3 shale = vec3(0.61, 0.78, 1.12);
             vec3 sandstone = vec3(1.21, 1.035, 0.78);
-            float mineralFamily = smoothstep(0.30, 0.70, mass * 0.65 + beds * 0.35);
+            float mineralFamily = smoothstep(0.30, 0.70, mass * 0.80 + beds * 0.20);
             vec3 mineralColor = mix(shale, sandstone, mineralFamily);
             float paleBed = smoothstep(0.57, 0.79, beds) * smoothstep(0.25, 0.52, mass);
-            mineralColor = mix(mineralColor, vec3(1.16, 1.12, 1.01), paleBed * 0.38);
+            mineralColor = mix(mineralColor, vec3(1.16, 1.12, 1.01), paleBed * 0.22);
+            // Cooler mineral faces follow real fracture orientation. They help
+            // broad crags read without adding another layer of horizontal bands.
+            vec3 fractureNormal = normalize(vPaintWorldNormal);
+            float fractureFace = smoothstep(0.24, 0.78, abs(dot(fractureNormal, normalize(vec3(0.83, 0.12, 0.55)))))
+              * (1.0 - abs(fractureNormal.y));
+            mineralColor = mix(mineralColor, vec3(0.84, 0.95, 1.08), fractureFace * 0.17);
             diffuseColor.rgb *= mix(vec3(1.0), mineralColor, uPaintPigment);
             vec4 textureDetail = rockTexture(pigmentPosition);
-            pigment = (beds - 0.5) * 0.11 + (crag - 0.5) * 0.14
-              + (textureDetail.y - 0.5) * 0.08 - textureDetail.x * 0.07 - textureDetail.z * 0.055;
+            pigment = (beds - 0.5) * 0.045 + (crag - 0.5) * 0.14
+              + (textureDetail.y - 0.5) * 0.08 - textureDetail.x * 0.035 - textureDetail.z * 0.055;
             float colony = rockFbm(geology * vec3(0.35, 0.22, 0.35) + vec3(8.4, 1.7, 3.9), footprint * 0.49);
             float moss = smoothstep(-0.6, 1.6, pigmentPosition.y)
               * smoothstep(0.52, 0.71, mass * 0.45 + colony * 0.55);
@@ -411,7 +417,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v9-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v10-${surface}`;
     materials[key] = material;
   }
 
@@ -428,7 +434,11 @@ export function createMaterials(THREE) {
     varying float vWaterDepth;
     varying vec3 vWaterView;
     varying vec3 vWaterNormal;
+    varying float vWaterFlow;
+    varying float vWaterEdge;
     attribute float waterDepth;
+    attribute float waterFlow;
+    attribute float waterEdge;
     uniform float uPhase;
     uniform float uFall;
     #include <fog_pars_vertex>
@@ -436,12 +446,13 @@ export function createMaterials(THREE) {
       vWaterUv = uv;
       vWaterPosition = position;
       vWaterDepth = waterDepth;
+      vWaterFlow = waterFlow;
+      vWaterEdge = waterEdge;
       vWaterNormal = normalize(normalMatrix * vec3(0.0, 1.0, 0.0));
       vec3 p = position;
-      float t = uPhase * 6.28318530718;
-      if (uFall < 0.5) {
-        p.y += sin(position.x * 2.4 + t * 2.0) * cos(position.z * 2.1 - t * 3.0) * 0.012;
-      }
+      // Lake and river share a level plane at their overlap. Displacing their
+      // different tessellations creates visible depth fighting at the mouth;
+      // filtered light and flow fields provide the small surface motion.
       vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
       vWaterView = -mvPosition.xyz;
       gl_Position = projectionMatrix * mvPosition;
@@ -454,6 +465,8 @@ export function createMaterials(THREE) {
     varying float vWaterDepth;
     varying vec3 vWaterView;
     varying vec3 vWaterNormal;
+    varying float vWaterFlow;
+    varying float vWaterEdge;
     uniform float uPhase;
     uniform vec3 uWater;
     uniform vec3 uFoam;
@@ -528,9 +541,10 @@ export function createMaterials(THREE) {
         float fineResolve = 1.0 - smoothstep(0.65, 1.55, fineWidth);
         float fineFlow = flowingField(fineP + vec2(longLanes, 0.0), 3.0, 7.3);
         float threadFoam = smoothstep(0.51, 0.73, fineFlow) * fineResolve;
-        float crest = pow(uv.y, 19.0) * (0.20 + broadRibbon * 0.16);
-        float foam = broadRibbon * 0.43 + threadFoam * 0.19 + crest;
-        color = mix(uWater * vec3(0.66, 0.95, 1.10), uFoam, clamp(0.20 + foam, 0.0, 0.91));
+        float crest = pow(uv.y, 24.0) * (0.36 + broadRibbon * 0.16);
+        float aeration = smoothstep(0.22, 0.85, 1.0 - uv.y);
+        float foam = broadRibbon * 0.29 + threadFoam * 0.14 + crest + aeration * 0.16;
+        color = mix(uWater * vec3(0.66, 0.95, 1.10), uFoam, clamp(0.27 + foam, 0.0, 0.91));
         float breakup = 1.0 - smoothstep(0.68, 0.97, uv.y);
         float leftDrift = flowingField(vec2(fallP.y * 0.075, 3.2), 1.0, 2.8);
         float rightDrift = flowingField(vec2(fallP.y * 0.069, 8.9), 1.0, 3.7);
@@ -538,12 +552,18 @@ export function createMaterials(THREE) {
         float rightEdge = 0.996 - breakup * (0.012 + rightDrift * 0.034);
         float edge = smoothstep(leftEdge, leftEdge + 0.024, uv.x)
           * (1.0 - smoothstep(rightEdge - 0.024, rightEdge, uv.x));
+        // Geometry supplies local stream edges where the lower sheet divides.
+        // This feathers each lobe without new transparent overlay meshes.
+        edge *= smoothstep(0.015, 0.17 + aeration * 0.06, vWaterEdge);
         float frayedEdge = (1.0 - smoothstep(0.055, 0.15, min(uv.x, 1.0 - uv.x))) * breakup;
         float air = mix(1.0, 0.45 + fineFlow * 0.55, frayedEdge * fineResolve);
-        float foot = smoothstep(0.0, 0.15, uv.y);
-        alpha = edge * air * foot * (0.43 + broadRibbon * 0.36 + threadFoam * 0.11);
+        float dispersed = flowingField(vec2(fallP.x * 1.35, fallP.y * 0.09), 2.0, 3.2);
+        float foot = smoothstep(0.008, 0.17 + dispersed * 0.10, uv.y);
+        alpha = edge * air * foot * (0.61 + broadRibbon * 0.20 + threadFoam * 0.07);
+        alpha = mix(alpha, edge * 0.97, pow(uv.y, 18.0));
       } else {
         vec2 p = vWaterPosition.xz;
+        float flow = clamp(vWaterFlow, 0.0, 1.0);
         vec2 region = p / max(uWorldScale.x, 1.0);
         float depth = max(vWaterDepth, 0.0) / max(uWorldScale.y, 1.0);
         float deep = smoothstep(0.018, 0.44, depth);
@@ -559,11 +579,12 @@ export function createMaterials(THREE) {
         color *= 0.91 + pool * 0.19;
         float fresnel = pow(1.0 - abs(dot(normalize(vWaterNormal), normalize(vWaterView))), 3.0);
         // Broad reflected sky washes are irregular and sparse, not a second
-        // periodic wave grid. The base remains translucent colored water.
+        // periodic wave grid. Depth is encoded as color instead of exposing
+        // pale submerged masonry through a transparent surface.
         float reflection = smoothstep(0.29, 0.72, skyWash) * (0.17 + fresnel * 0.25);
         if (uSkyEnabled > 0.5) {
           vec3 skyReflection = reflectedSky(current, bend, drift);
-          color = mix(color, skyReflection, (0.22 + reflection) * mix(0.72, 1.0, uWaterPigment));
+          color = mix(color, skyReflection, (0.22 + reflection) * mix(0.72, 1.0, uWaterPigment) * (1.0 - flow * 0.48));
         } else color = mix(color, uFoam, reflection * mix(0.65, 1.0, uWaterPigment));
         // Two stretched noise fields form broken, gently curved wind marks.
         // Derivatives suppress them before they alias into diagonal dot rows.
@@ -582,8 +603,15 @@ export function createMaterials(THREE) {
         float shoreWidth = max(fwidth(depth), 0.003);
         float shoreFoam = (1.0 - smoothstep(0.009, 0.036 + shoreWidth, abs(depth - 0.018)))
           * smoothstep(0.43, 0.72, waterField(p * 0.48 + drift * 0.17));
-        color = mix(color, uFoam, glint + shore * 0.035 + shoreFoam * 0.13);
-        alpha = mix(0.78, 0.96, deep);
+        // Sparse long-axis strokes describe a current in the river; the same
+        // material remains quiet on the lake, where waterFlow is zero.
+        vec2 streamP = vec2(p.x * 1.25, -p.y * 0.34);
+        float streamWidth = max(length(dFdx(streamP)), length(dFdy(streamP)));
+        float streamResolve = 1.0 - smoothstep(0.70, 1.6, streamWidth);
+        float stream = flowingField(streamP + bend, 2.0, 4.7);
+        float streamFoam = smoothstep(0.73, 0.90, stream) * flow * streamResolve * mix(0.35, 1.0, uWaterPigment);
+        color = mix(color, uFoam, glint * (1.0 - flow * 0.65) + shore * 0.035 + shoreFoam * 0.13 + streamFoam * 0.038);
+        alpha = 1.0;
       }
       color = mix(color, mix(uWater, uFoam, 0.2), uCozy * 0.24);
       gl_FragColor = vec4(color, alpha);
@@ -597,10 +625,12 @@ export function createMaterials(THREE) {
       name:`painted-${key}`,
       uniforms:{ ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog), ...waterUniforms, uFall:{ value:fall } },
       vertexShader:waterVertex, fragmentShader:waterFragment,
-      transparent:true, depthWrite:false, side:THREE.DoubleSide,
+      transparent:fall === 1, depthWrite:fall === 0, side:THREE.DoubleSide,
       fog:true, toneMapped:false,
     });
     materials[key].defaultAttributeValues.waterDepth = [0.5];
+    materials[key].defaultAttributeValues.waterFlow = [0];
+    materials[key].defaultAttributeValues.waterEdge = [1];
     materials[key].userData.castleSurface = key;
   }
 

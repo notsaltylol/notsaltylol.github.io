@@ -21,10 +21,12 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
       const distance=Math.atan2(Math.sin(angle-center),Math.cos(angle-center));
       return Math.exp(-((distance/width)**2));
     };
-    // Two broad eroded coves and an open eastern bay break the manufactured
-    // ellipse. The same boundary drives excavation, ecology and water depth.
-    return 1+.036*Math.sin(angle*2+.4)+.022*Math.cos(angle*3-1.2)
-      -.13*lobe(2.55,.36)-.085*lobe(-1.48,.29)+.10*lobe(-.25,.63);
+    // Authored bays alternate with two substantial wooded peninsulas. A single
+    // radial field drives the basin, shoreline mesh, depth and plant habitats;
+    // the outline is deliberate at landscape scale, not a noisy oval edge.
+    return 1+.025*Math.sin(angle*3+.4)
+      +.23*lobe(-.25,.55)+.15*lobe(-2.65,.42)+.18*lobe(1.05,.60)
+      -.43*lobe(-1.55,.25)-.37*lobe(2.45,.33)-.22*lobe(.45,.22);
   }
   const localLakeDistance = (x, z) => {
     const dx=(x-1.05)/2.35,dz=(z-.15)/1.65;
@@ -33,9 +35,22 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const lakeDistance = (x, z) => localLakeDistance(x / scale, z / scale);
   function localHeight(x, z) {
     let h = 1.14 + .13 * Math.sin(x * .9 + z * .45) + .10 * Math.cos(z * 1.6 - x * .28);
-    h += 2.05 * Math.exp(-((x + 3.1) ** 2 / 3.3 + (z + 1.7) ** 2 / 3.6));
+    const dx=x+3.1,dz=z+1.7;
+    // The castle stands on an oblique ridge with unequal shoulders and a
+    // shallow approach saddle. These broad forms remain visible in overview.
+    h += 1.40*Math.exp(-((dx+.24*dz)**2/2.35+dz*dz/1.78));
+    h += .77*Math.exp(-((x+4.66)**2/.82+(z+2.10)**2/1.38));
+    h += .48*Math.exp(-((x+3.64)**2/1.65+(z-.04)**2/.86));
+    h += .56*Math.exp(-((x+1.77)**2/.72+(z+2.74)**2/1.17));
+    h -= .23*Math.exp(-((x+4.08+.18*dz)**2/.11+(z+.78)**2/1.10));
     h += .55 * Math.exp(-((x - 3.7) ** 2 / 2.8 + (z + 2.8) ** 2 / 2));
-    const terrace = 1 - smooth(.85, 1.5, Math.hypot((x + 3.1) / 1.5, (z + 1.7) / 1.15));
+    // Keep the exact anchor and a physically buildable central keep footprint.
+    // The smaller irregular bench blends into a ridge instead of a flat mesa.
+    const benchX=Math.max(.68,1.38/scale),benchZ=Math.max(.59,1.38/scale);
+    const benchAngle=Math.atan2(dz,dx);
+    const benchDistance=Math.hypot((dx+.10*dz)/benchX,dz/benchZ)
+      /(1+.075*Math.sin(benchAngle*3+.4)+.035*Math.cos(benchAngle*5));
+    const terrace = Math.max(1-smooth(1,1.80,benchDistance),1-smooth(1.35/scale,1.50/scale,Math.hypot(dx,dz)));
     h = h * (1 - terrace) + 2.78 * terrace;
     const shoreDistance=localLakeDistance(x,z);
     // A shallow natural bank contains the lake where the underlying rolling
@@ -110,7 +125,8 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     }
     for(let j=0;j<rings;j++) for(let i=0;i<segments;i++){
       const a=j*(segments+1)+i,b=a+segments+1;
-      indices.push(a,a+1,b,a+1,b+1,b);
+      if(j>0)indices.push(a,a+1,b);
+      indices.push(a+1,b+1,b);
     }
   }else{
     // Refine only curved lake banks and channel sides. A shared integer grid
@@ -187,6 +203,26 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   lipLocalZ -= .012;
   const lipZ = lipLocalZ * scale;
   const fallAngle=Math.atan2(lipZ/.76,riverX(lipZ));
+  // The exposed cut beside the fall is bare stone, not a dangling grassy bank.
+  // Partition existing triangles into two batches; their vertices, normals and
+  // shared edges remain exact, with no overlay surface or extra bank geometry.
+  const meadowGrass=[],meadowStone=[];
+  const bankA=new THREE.Vector3(),bankB=new THREE.Vector3(),bankC=new THREE.Vector3();
+  for(let i=0;i<indices.length;i+=3){
+    const ia=indices[i],ib=indices[i+1],ic=indices[i+2];
+    bankA.fromArray(positions,ia*3);bankB.fromArray(positions,ib*3);bankC.fromArray(positions,ic*3);
+    const x=(bankA.x+bankB.x+bankC.x)/3,y=(bankA.y+bankB.y+bankC.y)/3,z=(bankA.z+bankB.z+bankC.z)/3;
+    const nearLip=z>lipZ-.30*scale&&Math.abs(x-riverX(z))<.78*scale&&y<waterLevel+.18*scale;
+    const steep=nearLip&&bankB.sub(bankA).cross(bankC.sub(bankA)).normalize().y<.80;
+    (steep?meadowStone:meadowGrass).push(ia,ib,ic);
+  }
+  if(meadowStone.length){
+    meadow.geometry.setIndex([...meadowGrass,...meadowStone]);
+    meadow.geometry.clearGroups();
+    meadow.geometry.addGroup(0,meadowGrass.length,0);
+    meadow.geometry.addGroup(meadowGrass.length,meadowStone.length,1);
+    meadow.material=[materials.grass,materials.rock];
+  }
 
   // The fixed meadow boundary blends into independently leaning rock faces.
   // Broken shelves and deep fault clefts shape the mass before fine erosion.
@@ -297,7 +333,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const habitat=coherentNoise3D(Math.cos(a)*3.1+9.2,.7,Math.sin(a)*3.1);
     const fine=coherentNoise3D(Math.cos(a)*17.2,1.6,Math.sin(a)*17.2);
     const channelAngle=Math.abs(Math.atan2(Math.sin(a-fallAngle),Math.cos(a-fallAngle)));
-    const depth=(.003+.064*smooth(-.03,.42,habitat)+.008*smooth(-.10,.38,fine))*smooth(.08,.22,channelAngle);
+    const depth=(.003+.064*smooth(-.03,.42,habitat)+.008*smooth(-.10,.38,fine))*smooth(.18,.34,channelAngle);
     const ring=depth*j/skirtRows*cliffRings,left=Math.floor(ring),blend=ring-left;
     const p=(left*(cliffSegments+1)+i)*3,q=((left+1)*(cliffSegments+1)+i)*3;
     // Follow the actual displaced cliff edges; using the analytic base here
@@ -346,7 +382,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const lake = add(lakeGeometry, materials.water);
   lake.name = 'excavated-lake-water';
   lake.castShadow = false; lake.renderOrder = 2;
-  const riverP = [], riverU = [], riverI = [], riverDepth = [];
+  const riverP = [], riverU = [], riverI = [], riverDepth = [], riverFlow = [];
   const riverSteps = Math.round(80 * Math.max(1, Math.min(4, scale)));
   const riverColumns = Math.round(4 * Math.max(1, Math.min(3, scale)));
   for (let i = 0; i <= riverSteps; i++) {
@@ -356,6 +392,9 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
       const x = riverX(z) + (j / riverColumns * 2 - 1) * width;
       riverP.push(x, waterLevel, z); riverU.push(j / riverColumns, i / riverSteps);
       riverDepth.push(Math.max(0, waterLevel - height(x, z)));
+      // Lake and river overlap on a common plane at the mouth. Keep their
+      // material inputs identical until clear of the hidden lake mesh edge.
+      riverFlow.push(smooth(1.34,1.95,lakeDistance(x,z)));
       if (i < riverSteps && j < riverColumns) {
         const a = i * (riverColumns + 1) + j, b = a + riverColumns + 1;
         riverI.push(a, b, a + 1, a + 1, b, b + 1);
@@ -364,20 +403,41 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   }
   const riverGeometry = geometry(riverP, riverU, riverI);
   riverGeometry.setAttribute('waterDepth', new THREE.Float32BufferAttribute(riverDepth, 1));
+  riverGeometry.setAttribute('waterFlow', new THREE.Float32BufferAttribute(riverFlow, 1));
   const river = add(riverGeometry, materials.water);
   river.name = 'connected-river-water';
   river.castShadow = false; river.renderOrder = 2;
   const lip = new THREE.Vector3(riverX(lipZ), waterLevel, lipZ);
-  const fallP = [], fallU = [], fallI = [];
-  const fallRows = Math.round(80 * Math.max(1, Math.min(2, verticalScale))), fallColumns = Math.round(12 * Math.max(1, Math.min(4, scale)));
-  for (let j = 0; j <= fallRows; j++) for (let i = 0; i <= fallColumns; i++) {
-    const t = j / fallRows, side = i / fallColumns - .5;
-    const width = (.89 * (1 - .24 * t) + .06 * Math.sin(t * 17 + side * 2)) * scale;
-    fallP.push(lip.x + side * width, waterLevel - t * 7.4 * verticalScale, lip.z + .05 + .46 * Math.sin(t * Math.PI / 2));
-    fallU.push(i / fallColumns, 1 - t);
-    if (j < fallRows && i < fallColumns) { const a = j * (fallColumns + 1) + i; fallI.push(a, a + 1, a + fallColumns + 1, a + 1, a + fallColumns + 2, a + fallColumns + 1); }
-  }
-  const waterfall = add(geometry(fallP, fallU, fallI), materials.waterfall);
+  const fallP = [], fallU = [], fallI = [], fallEdge = [];
+  const fallRows = Math.round(80 * Math.max(1, Math.min(2, verticalScale)));
+  const lipWidth=2*(.41+.045*Math.sin(lipLocalZ*2))*scale;
+  const streams=[[0,.29,-.25],[.29,.72,.20],[.72,1,-.05]];
+  // The three streams share an exact continuous river lip. Below the lip they
+  // curl into unequal lobes, narrow, separate and disperse at different depths.
+  // Only mesh shape changes: shader time still supplies the exact looped flow.
+  streams.forEach(([start,end,lengthOffset],stream)=>{
+    const columns=Math.max(4,Math.round((end-start)*48*Math.max(1,Math.min(2,scale))));
+    const first=fallP.length/3,center=(start+end)/2;
+    for(let j=0;j<=fallRows;j++)for(let i=0;i<=columns;i++){
+      const t=j/fallRows,v=i/columns,u=start+(end-start)*v;
+      const split=smooth(.08,.26,t),narrow=.40*smooth(.08,.56,t)-.16*smooth(.64,1,t);
+      const edgeRetreat=(u-center)*narrow;
+      const drift=(.080*Math.sin(t*Math.PI)+.032*Math.sin(t*6.3+stream*.8)*split)*scale;
+      const x=lip.x+((u-.5)-edgeRetreat+(center-.5)*.15*split)*lipWidth+drift;
+      const length=7.0+lengthOffset+.35*Math.sin(v*Math.PI)+.10*Math.sin(v*8+stream);
+      const y=waterLevel-t*7.4*verticalScale+(7.4-length)*verticalScale*t**5*split;
+      const lipRoll=.080*Math.sin(u*9)*smooth(0,.035,t)*(1-smooth(.035,.15,t));
+      const z=lip.z+scale*(.19*smooth(0,.14,t)+.20*t*t+lipRoll+.025*Math.sin(u*9+t*6)*Math.sin(t*Math.PI));
+      fallP.push(x,y,z);fallU.push(u,1-t);
+      const wholeEdge=Math.min(1,Math.min(u,1-u)*8),streamEdge=Math.min(1,Math.min(v,1-v)*6);
+      fallEdge.push(wholeEdge*(1-split)+streamEdge*split);
+      if(j<fallRows&&i<columns){const a=first+j*(columns+1)+i,b=a+columns+1;fallI.push(a,a+1,b,a+1,b+1,b);}
+    }
+  });
+  const fallGeometry=geometry(fallP,fallU,fallI);
+  fallGeometry.setAttribute('waterEdge',new THREE.Float32BufferAttribute(fallEdge,1));
+  const waterfall = add(fallGeometry, materials.waterfall);
+  waterfall.name='split-lobed-waterfall';
   waterfall.castShadow = false; waterfall.renderOrder = 3;
 
   const stoneChunks = [], flowerChunks = [];
@@ -510,7 +570,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
   const trailMesh = add(geometry(pathP,pathU,pathI), materials.stone); trailMesh.material.side = THREE.DoubleSide; trailMesh.castShadow = false;
   trailMesh.name = 'limestone-walking-route';
   const detailStats = { stoneCount, flowerCount, stoneChunks:stoneChunks.length, flowerChunks:flowerChunks.length,
-    meadowTriangles:indices.length / 3, refinedBankCells, cliffTriangles:cliffI.length / 3, lakeTriangles:waterI.length / 3, riverTriangles:riverI.length / 3,
+    meadowTriangles:indices.length / 3, lipBankTriangles:meadowStone.length/3, refinedBankCells, cliffTriangles:cliffI.length / 3, lakeTriangles:waterI.length / 3, riverTriangles:riverI.length / 3,
     stonePatches:stonePatches.length, flowerPatches:flowerPatches.length, scatterAttempts, trailWidth:.34 };
   return { group, scale, verticalScale, height, contains, radius, lakeDistance, riverX, waterLevel, lip, castleAnchor,
     toLocal, toWorld, trail, trailDistance, isReserved, updateDetail, detailStats };

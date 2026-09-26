@@ -66,13 +66,22 @@ export function createAtmosphere(THREE, {
         // downward-looking perspective camera. Zoom moves the camera, keeping
         // the backdrop's angular detail instead of magnifying a few texels.
         vec3 forward=-vec3(viewMatrix[0][2],viewMatrix[1][2],viewMatrix[2][2]);
-        vec3 longitudeDirection=normalize(forward+(d-forward)*3.0);
-        float u=(atan(longitudeDirection.x,-longitudeDirection.z)+.24)*panoramaRepeat/6.28318530718+.5+panoramaDrift;
-        float v=clamp(.48+(asin(clamp(d.y,-1.0,1.0))+.304692654)*1.2,.006,.994);
+        float forwardLongitude=atan(forward.x,-forward.z);
+        float longitude=atan(d.x,-d.z);
+        float longitudeOffset=atan(sin(longitude-forwardLongitude),cos(longitude-forwardLongitude));
+        // Widen the panorama in angular space. Extrapolating 3D ray vectors
+        // crosses a false pole at steep camera elevations, creating a starburst.
+        float u=(forwardLongitude+longitudeOffset*1.7+.24)*panoramaRepeat/6.28318530718+.5+panoramaDrift;
+        float v=.64+asin(clamp(d.y,-1.0,1.0))*.55;
+        // Preserve painted cloud structure at high/low viewing elevations.
+        // A hard clamp would stretch one edge row over half the sky. These
+        // soft tails retain a continuous first derivative into the poles.
+        if(v<.05)v=.006+.044*exp((v-.05)/.044);
+        else if(v>.95)v=.994-.044*exp((.95-v)/.044);
         // Explicit continuous derivatives prevent the atan seam from selecting
         // a blurry mip level when the orbit crosses the panorama join.
-        vec3 ld=longitudeDirection;
-        float longitudeScale=panoramaRepeat/(6.28318530718*max(.0001,ld.x*ld.x+ld.z*ld.z));
+        vec3 ld=d;
+        float longitudeScale=1.7*panoramaRepeat/(6.28318530718*max(.0001,ld.x*ld.x+ld.z*ld.z));
         float duX=(-ld.z*dFdx(ld.x)+ld.x*dFdx(ld.z))*longitudeScale;
         float duY=(-ld.z*dFdy(ld.x)+ld.x*dFdy(ld.z))*longitudeScale;
         vec3 paint=textureGrad(panorama,vec2(u,v),vec2(duX,dFdx(v)),vec2(duY,dFdy(v))).rgb;

@@ -189,20 +189,39 @@ export function buildLandscapeDetails(THREE, materials, terrain) {
     const angle = i / shorelineSamples * Math.PI * 2 + range(-.07, .07) / worldScale;
     // Exposed stone gathers in irregular groups, with long untouched banks.
     if (Math.sin(angle * 3 + .5) + Math.sin(angle * 5 + .2) < -.12 || i % 9 === 0) continue;
-    let r = .94, x = 0, z = 0;
-    while (r < 1.37) {
-      const p = world(1.05 + Math.cos(angle) * 2.35 * r, .15 + Math.sin(angle) * 1.65 * r);
-      x = p.x; z = p.z;
-      if (terrain.height(x, z) > terrain.waterLevel + .017) break;
-      r += .009 / worldScale;
+    const shoreProbe=world(1.05+Math.cos(angle)*2.35,.15+Math.sin(angle)*1.65);
+    const shoreRadius=terrain.lakeDistance?1/terrain.lakeDistance(shoreProbe.x,shoreProbe.z):1;
+    const pointAt=r=>world(1.05+Math.cos(angle)*2.35*r,.15+Math.sin(angle)*1.65*r);
+    let lower=.75*shoreRadius,upper=lower,x=0,z=0,foundShore=false;
+    // The shared radial basin gives a tight bracket even inside a deep cove.
+    // A short coarse scan finds the first dry bank, then bounded bisection
+    // replaces hundreds of tiny height queries at large island scale.
+    for(let step=1;step<=20;step++){
+      upper=(.75+.70*step/20)*shoreRadius;
+      const p=pointAt(upper);
+      if(terrain.height(p.x,p.z)>terrain.waterLevel+.017){foundShore=true;break;}
+      lower=upper;
     }
-    if (!terrain.contains(x, z, .24) || (z > 1.25 * worldScale && Math.abs(x - terrain.riverX(z)) < .78 * worldScale)) continue;
+    if(foundShore){
+      for(let step=0;step<12;step++){
+        const middle=(lower+upper)/2,p=pointAt(middle);
+        if(terrain.height(p.x,p.z)>terrain.waterLevel+.017)upper=middle;else lower=middle;
+      }
+      const p=pointAt(upper);x=p.x;z=p.z;
+    }
+    if (!foundShore || !terrain.contains(x, z, .24) || (z > 1.25 * worldScale && Math.abs(x - terrain.riverX(z)) < .78 * worldScale)) continue;
     const size = range(.075, .145);
+    // Move the whole pebble onto the bank, then sample its final footprint.
+    // Searching the new deep coves must not leave stones on the lake mesh.
+    x+=Math.cos(angle)*(size*1.8+.02);z+=Math.sin(angle)*(size*1.8+.02);
+    if(!terrain.contains(x,z,size*1.8+.02)||terrain.height(x,z)<=terrain.waterLevel+.017)continue;
     stamp(pebble, i % 3 ? 'rock' : 'stone', [x, terrain.height(x, z) + .015, z],
       [size * range(1.2, 1.8), size * .54, size], [range(-.2, .2), range(0, Math.PI), range(-.15, .15)]);
     shoreStoneCount++;
     if (i % 3 === 0) {
       const xx = x + Math.cos(angle + .8) * size * 1.8, zz = z + Math.sin(angle + .8) * size;
+      if(!terrain.contains(xx,zz,size)||terrain.height(xx,zz)<=terrain.waterLevel+.017
+        ||(zz>1.25*worldScale&&Math.abs(xx-terrain.riverX(zz))<.78*worldScale))continue;
       stamp(pebble, 'stone', [xx, terrain.height(xx, zz) + .012, zz], [size * .64, size * .32, size * .53], [0, angle, 0]);
       shoreStoneCount++;
     }
