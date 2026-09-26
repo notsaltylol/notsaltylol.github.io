@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<title>notsaltylol · orbital loop</title>
+<style>html,body{margin:0;background:#101820}canvas{display:block}</style>
+<script type="module">
+import * as THREE from './vendor/three/three.module.js';
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#101820');
+const camera = new THREE.PerspectiveCamera(36, 800 / 280, .1, 100);
+camera.position.set(0, 0, 8);
+const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+renderer.setSize(800, 280);
+renderer.setPixelRatio(1);
+document.body.appendChild(renderer.domElement);
+const group = new THREE.Group();
+scene.add(group);
+const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(.83,.23,120,12), new THREE.MeshBasicMaterial({color:0x7de2c3,wireframe:true,transparent:true,opacity:.65}));
+group.add(knot);
+for (let i=0;i<3;i++) {
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(1.65+i*.14,.009,6,128),new THREE.MeshBasicMaterial({color:i===1?0x7de2c3:0x426779}));
+  ring.rotation.set(.5+i*.6,i*.7,.3);
+  group.add(ring);
+}
+// Fixed seed keeps the starfield identical across renders.
+let seed=17;
+const random=()=>{seed=(seed*16807)%2147483647;return seed/2147483647;};
+const positions=[];
+for(let i=0;i<100;i++)positions.push((random()-.5)*17,(random()-.5)*6,-2-random()*3);
+const geometry=new THREE.BufferGeometry();
+geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+scene.add(new THREE.Points(geometry,new THREE.PointsMaterial({color:0x608e93,size:.018})));
+window.renderFrame = phase => {
+  group.rotation.y=phase*Math.PI*2;
+  knot.rotation.z=.2*Math.sin(phase*Math.PI*2);
+  renderer.render(scene,camera);
+};
+window.renderFrame(0);
+if (!new URLSearchParams(location.search).has('capture')) {
+  const start=performance.now();
+  renderer.setAnimationLoop(now=>window.renderFrame(((now-start)%6000)/6000));
+}
+</script>
+</html>

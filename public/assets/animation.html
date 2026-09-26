@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="data:,">
+<title>Castle in the sky · five studies · notsaltylol</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;background:#b8e3ee;color:#263f39;font-family:system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:28px 24px 40px}header{display:flex;justify-content:space-between;align-items:baseline;gap:20px}h1{font-size:24px;letter-spacing:-.7px;margin:0}header a{color:inherit;font-size:13px}p{font-size:14px;line-height:1.5}#scene{width:100%;max-width:960px;margin:20px auto 24px;overflow:hidden;border-radius:18px}canvas{display:block;max-width:100%;height:auto!important}#style-picker{display:flex;gap:8px;flex-wrap:wrap}button{font:inherit;font-size:13px;color:#264438;background:#ffffffb3;border:1px solid #26443833;border-radius:24px;padding:10px 15px;cursor:pointer}button[aria-pressed=true]{background:#264438;color:#fff9e6;border-color:#264438}button:focus-visible,a:focus-visible{outline:3px solid #c27e40;outline-offset:3px}.foot{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:16px}#description{min-height:22px;margin:12px 0 0}#pause{flex-shrink:0}small{opacity:.8}.capture main{width:960px;max-width:none;margin:0;padding:0}.capture header,.capture .controls{display:none}.capture #scene{width:960px;max-width:none;margin:0;border-radius:0}.capture canvas{max-width:none}@media(max-width:600px){main{padding:20px 12px}h1{font-size:21px}.foot{align-items:flex-start}}
+</style>
+<script>if(new URLSearchParams(location.search).has('capture'))document.documentElement.classList.add('capture');</script>
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.js"}}</script>
+</head>
+<body>
+<main>
+<header><h1>Castle in the sky</h1><a href="https://github.com/notsaltylol/notsaltylol">notsaltylol / source ↗</a></header>
+<div id="scene" role="img" aria-label="A layered painted fantasy landscape with a floating castle, lake, waterfalls, and travelers"><p id="loading">Loading the illustrated landscape…</p></div>
+<noscript>This scene needs JavaScript. The GitHub profile has an animated GIF version.</noscript>
+<nav class="controls" style="margin-bottom:16px"><a id="three-d-link" href="./animation-3d.html">Explore in 3D ↗</a> &nbsp; / &nbsp; <b>Illustrated version</b></nav>
+<section class="controls" aria-label="Scene styles">
+<div id="style-picker" role="group" aria-label="Choose one of five visual styles"></div>
+<p id="description" aria-live="polite"></p>
+<div class="foot"><small>One island. Five art directions. Your selection stays in the URL.</small><button id="pause" type="button">Pause motion</button></div>
+</section>
+</main>
+<script type="module" src="./castle-illustration.js"></script>
+</body>
+</html>

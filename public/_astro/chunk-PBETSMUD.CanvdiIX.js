@@ -1,0 +1,1 @@
+var e={disconnect(){},flush(){}};function t({attributeFilter:t=[],onChange:n,root:r}){if(typeof MutationObserver>`u`)return e;let i=!1,a=new MutationObserver(e=>{i||n(e)});return a.observe(r,{attributeFilter:t.length>0?t:void 0,attributes:t.length>0,childList:!0,subtree:!0}),{disconnect(){i||(i=!0,a.disconnect())},flush(){a.takeRecords()}}}export{t};
