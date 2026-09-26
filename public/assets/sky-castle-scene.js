@@ -2,6 +2,9 @@ import * as THREE from './vendor/three/three.module.js';
 import { createMaterials } from './sky-castle-materials.js';
 import { createAtmosphere } from './sky-castle-atmosphere.js';
 import { buildTerrain } from './sky-castle-terrain.js';
+import { buildSatelliteTerrain } from './sky-castle-satellites.js';
+import { buildAcropolis } from './sky-castle-acropolis.js';
+import { buildTraveler } from './sky-castle-travelers.js';
 import { buildCastle, buildTree, buildPavilion } from './sky-castle-models.js';
 import { buildLandscapeDetails } from './sky-castle-details.js';
 import { buildGroves } from './sky-castle-groves.js';
@@ -13,7 +16,8 @@ import { STYLES, DEFAULT_STYLE } from './castle-styles.js';
 const W = 960, H = 600, DURATION = 60;
 const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE, HALF_WIDTH=14*LAND_SCALE;
 const groveControllers=[];
-const sunOffset=new THREE.Vector3(15*LAND_SCALE,21*LAND_SCALE,11*LAND_SCALE);
+const travelerControllers=[];
+const sunOffset=new THREE.Vector3(14*LAND_SCALE,17*LAND_SCALE,19*LAND_SCALE);
 const params = new URLSearchParams(location.search), capture = params.has('capture');
 const sceneContainer=document.getElementById('scene');
 let renderScale=capture?1:Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
@@ -36,6 +40,8 @@ scene.fog = new THREE.Fog(0xb4dce4, 40*LAND_SCALE, 90*LAND_SCALE);
 const camera = new THREE.OrthographicCamera(-HALF_WIDTH,HALF_WIDTH,HALF_WIDTH*H/W,-HALF_WIDTH*H/W,.1,180*LAND_SCALE);
 const palette = createMaterials(THREE), m = palette.materials;
 palette.setWorldScale(LAND_SCALE,HEIGHT_SCALE);
+const meadowReady=palette.loadMeadowTexture(new URL('./meadow-paint-v1.png',import.meta.url).href);
+const rockReady=palette.loadRockTexture(new URL('./rock-paint-v1.png',import.meta.url).href);
 const ambient = new THREE.HemisphereLight(0xfff3d7,0x739aaa,1.45);
 const sunlight = new THREE.DirectionalLight(0xfff0d3,2.8);
 sunlight.position.copy(sunOffset); sunlight.castShadow = true;
@@ -43,12 +49,15 @@ sunlight.shadow.mapSize.set(4096,4096);
 Object.assign(sunlight.shadow.camera,{left:-16*LAND_SCALE,right:16*LAND_SCALE,top:17*LAND_SCALE,bottom:-14*LAND_SCALE,near:1,far:60*LAND_SCALE});
 sunlight.shadow.bias = -.00004; sunlight.shadow.normalBias = .035;
 scene.add(ambient,sunlight,sunlight.target);
-const terrain = buildTerrain(THREE,m,{scale:LAND_SCALE}); scene.add(terrain.group);
+const terrain = buildTerrain(THREE,m,{scale:LAND_SCALE,
+ reservedAreas:[{x:-3.1*LAND_SCALE,z:-1.7*LAND_SCALE,radius:11.3}]
+}); scene.add(terrain.group);
 const landscapeDetails = buildLandscapeDetails(THREE,m,terrain); scene.add(landscapeDetails.group);
 const botany = buildBotany(THREE,m,terrain); scene.add(botany.group);
 const castle = buildCastle(THREE,m); castle.scale.setScalar(.64);
 castle.position.copy(terrain.castleAnchor); castle.position.y-=.09;castle.rotation.y = .17;
 scene.add(castle);
+const acropolis=buildAcropolis(THREE,m,terrain);scene.add(acropolis.group);
 
 // Unequal tree silhouettes follow the actual height field and frame the hill.
 const trees = [[-4.8,-1.2,1.7,'cypress'],[-4.1,.4,1.35,'cypress'],[-2.1,-2.8,1.45,'cypress'],[-1.0,-3.8,1.6,'broadleaf'],[2.8,-3.1,1.2,'broadleaf'],[4.7,-1.8,1.8,'broadleaf'],[4.5,1.4,1.1,'cypress'],[-4.8,2,1.25,'broadleaf'],[-.9,3.5,.9,'broadleaf']];
@@ -59,45 +68,30 @@ for(let i=0;i<trees.length;i++) {
 const pavilion=buildPavilion(THREE,m);pavilion.scale.setScalar(.64);pavilion.position.set(4.1*LAND_SCALE,terrain.height(4.1*LAND_SCALE,-2.6*LAND_SCALE),-2.6*LAND_SCALE);scene.add(pavilion);
 const groves=buildGroves(THREE,m,terrain,{buildTree,count:900,reservedPositions:trees.map(([x,z])=>[x*LAND_SCALE,z*LAND_SCALE,1.3])});scene.add(groves.group);groveControllers.push(groves);
 
-// Smaller formations use the same geology at a lighter amplitude. Their rims
-// stay fixed beneath the meadow caps; erosion appears below the planted surface.
-function satellite(x,y,z,scale) {
-  const group=new THREE.Group(); group.position.set(x*LAND_SCALE,y*HEIGHT_SCALE,z*LAND_SCALE);group.scale.setScalar(scale);
-  const p=[],ix=[],uv=[],n=160,rr=64;
-  for(let j=0;j<=rr;j++)for(let i=0;i<=n;i++){
-    const a=i/n*Math.PI*2,t=j/rr,base=(1.4+.11*Math.sin(a*5))*Math.pow(1-t,.63);
-    const erosion=fractalRock(Math.cos(a)*base*LAND_SCALE+x,-t*3.8*HEIGHT_SCALE,Math.sin(a)*base*LAND_SCALE+z);
-    const mask=Math.sin(t*Math.PI),r=base*LAND_SCALE+erosion*.22*mask;
-    p.push(Math.cos(a)*r,(-2.1*t+.07*Math.sin(a*3)*mask)*HEIGHT_SCALE+erosion*.08*mask,Math.sin(a)*r*.82);uv.push(i/n,t);
-    if(j<rr&&i<n){const q=j*(n+1)+i;ix.push(q,q+1,q+n+1,q+1,q+n+2,q+n+1);}
-  }
-  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(p,3));geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));geo.setIndex(ix);geo.computeVertexNormals();
-  const normals=geo.attributes.normal;
-  for(let j=0;j<=rr;j++){const first=j*(n+1),last=first+n;const normal=new THREE.Vector3().fromBufferAttribute(normals,first).add(new THREE.Vector3().fromBufferAttribute(normals,last)).normalize();normals.setXYZ(first,normal.x,normal.y,normal.z);normals.setXYZ(last,normal.x,normal.y,normal.z);}
-  const rock=new THREE.Mesh(geo,m.rock);rock.name='satellite-fractal-rock';rock.castShadow=rock.receiveShadow=true;group.add(rock);
-  const grass=new THREE.Mesh(new THREE.SphereGeometry(1.4,32,16,0,Math.PI*2,0,Math.PI/2),m.grass);grass.scale.set(LAND_SCALE,.15*HEIGHT_SCALE,.82*LAND_SCALE);group.add(grass);
-  const temple=buildPavilion(THREE,m);temple.scale.setScalar(.64);temple.position.y=.21*HEIGHT_SCALE-.025;group.add(temple);
-  const capHeight=(xx,zz)=>.21*HEIGHT_SCALE*Math.sqrt(Math.max(0,1-(xx/(1.4*LAND_SCALE))**2-(zz/(1.4*.82*LAND_SCALE))**2));
-  const tree=buildTree(THREE,m,{height:.85,kind:'cypress',seed:43});tree.position.set(-.7*LAND_SCALE,capHeight(-.7*LAND_SCALE,-.25*LAND_SCALE),-.25*LAND_SCALE);group.add(tree);
-  const capTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,height:capHeight,waterLevel:-1000,
-    radius:a=>1.4*LAND_SCALE/Math.hypot(Math.cos(a),Math.sin(a)/.82),
-    contains:(xx,zz,margin=0)=>Math.hypot(xx,zz/.82)<1.4*LAND_SCALE-margin};
-  const grove=buildGroves(THREE,m,capTerrain,{buildTree,count:100,islandKind:'satellite',reservedPositions:[[0,0,1],[-.7*LAND_SCALE,-.25*LAND_SCALE,.8]]});group.add(grove.group);groveControllers.push(grove);
-  scene.add(group);return group;
+// Smaller landforms have individually authored shoulders and fractured bases.
+// Their surface sampler grounds the same small buildings and grove geometry.
+function satellite(x,y,z,size,seed) {
+  const land=buildSatelliteTerrain(THREE,m,{scale:LAND_SCALE,seed});
+  const group=land.group;group.position.set(x*LAND_SCALE,y*HEIGHT_SCALE,z*LAND_SCALE);group.scale.setScalar(size);
+  const temple=buildPavilion(THREE,m);temple.scale.setScalar(.64);temple.position.y=land.height(0,0)-.025;group.add(temple);
+  const tree=buildTree(THREE,m,{height:.85,kind:'cypress',seed});
+  tree.position.set(-.7*LAND_SCALE,land.height(-.7*LAND_SCALE,-.25*LAND_SCALE),-.25*LAND_SCALE);group.add(tree);
+  const grove=buildGroves(THREE,m,land,{buildTree,count:100,islandKind:'satellite',seed:seed*113,
+    reservedPositions:[[0,0,1.3],[-.7*LAND_SCALE,-.25*LAND_SCALE,.8]]});
+  group.add(grove.group);groveControllers.push(grove);scene.add(group);return group;
 }
-satellite(10,-.2,-4,.92);satellite(-11,-1.7,-6,.64);satellite(4,-1.8,-13,.45);
+satellite(10,-.2,-4,.92,43);satellite(-11,-1.7,-6,.64,71);satellite(4,-1.8,-13,.45,97);
 
 // Brass celestial mechanism, deliberately subordinate to the castle silhouette.
 const machine=new THREE.Group(); machine.position.set(-.8*LAND_SCALE,terrain.height(-.8*LAND_SCALE,-2.8*LAND_SCALE),-2.8*LAND_SCALE);
 const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(.23,.33,.4,24),m.stone);pedestal.position.y=.2;machine.add(pedestal);
 for(let i=0;i<3;i++){const ring=new THREE.Mesh(new THREE.TorusGeometry(.37,.018,6,48),m.gold);ring.position.y=.7;ring.rotation.set(i*.8,i*.6,.25);machine.add(ring);}scene.add(machine);
 
-// Tiny geometric travelers establish scale without dominating the diorama.
+// Small human silhouettes establish scale without dominating the landscape.
 function traveler(x,z,scale,groundY=null) {
- const g=new THREE.Group();g.scale.setScalar(scale);g.position.set(x,groundY??terrain.height(x,z),z);
- const body=new THREE.Mesh(new THREE.ConeGeometry(.12,.35,12),m.roof);body.position.y=.24;g.add(body);
- const head=new THREE.Mesh(new THREE.SphereGeometry(.068,12,8),m.stoneLight);head.position.y=.48;g.add(head);
- const staff=new THREE.Mesh(new THREE.CylinderGeometry(.011,.014,.49,6),m.wood);staff.position.set(.13,.24,0);g.add(staff);scene.add(g);
+ const controller=buildTraveler(THREE,m,{seed:travelerControllers.length+1,companion:travelerControllers.length%2===1});
+ controller.group.scale.setScalar(scale);controller.group.position.set(x,groundY??terrain.height(x,z),z);
+ travelerControllers.push(controller);scene.add(controller.group);
 }
 traveler(-.85*LAND_SCALE,2.8*LAND_SCALE,1);traveler(-.56*LAND_SCALE,2.87*LAND_SCALE,.72);
 
@@ -112,10 +106,18 @@ for(const [upper,material,vertical] of [[true,foregroundGrass,.65*HEIGHT_SCALE],
  const geo=new THREE.SphereGeometry(1,columns,rows,0,Math.PI*2,upper?0:Math.PI/2,Math.PI/2);
  const p=geo.attributes.position;
  for(let i=0;i<p.count;i++){
-  const x=p.getX(i),y=p.getY(i),z=p.getZ(i),warp=1+.05*Math.sin(Math.atan2(z,x)*5)+.025*Math.cos(x*9+z*4);
-  const px=x*9.5*LAND_SCALE*warp,pz=z*2.5*LAND_SCALE*warp;
+  const x=p.getX(i),y=p.getY(i),z=p.getZ(i),a=Math.atan2(z,x);
+  const warp=1+.09*Math.sin(a*3+.4)+.045*Math.cos(a*7-.6)+.08*x*(1-z*z);
+  const px=x*9.5*LAND_SCALE*warp+.85*LAND_SCALE*z*z*(.4+x);
+  const pz=z*2.5*LAND_SCALE*warp+.42*LAND_SCALE*Math.sin(x*2.6)*(1-.4*z*z);
   const erosion=upper?0:fractalRock(px*.7,y*vertical*.9,pz*.8+12)*Math.sin(Math.min(1,Math.abs(y))*Math.PI);
-  p.setXYZ(i,px+erosion*x*.24,y*vertical+erosion*.12,pz+erosion*z*.24);
+  const knolls=.25*Math.exp(-(((x+.35)/.38)**2+((z+.1)/.75)**2))
+   +.16*Math.exp(-(((x-.48)/.4)**2+((z+.30)/.7)**2))
+   -.14*Math.exp(-(((x-.02)/.5)**2+((z-.25)/.45)**2));
+  const height=upper?y*vertical+knolls*HEIGHT_SCALE*Math.sqrt(Math.max(0,y))
+   :y*vertical*(1+.18*Math.cos(a+.7)*Math.sin(Math.abs(y)*Math.PI))
+     +HEIGHT_SCALE*.11*Math.sin(a*3+Math.abs(y)*8)*Math.sin(Math.abs(y)*Math.PI)+erosion*.12;
+  p.setXYZ(i,px+erosion*x*.24,height,pz+erosion*z*.24);
  }
  if(!upper){
   // Subdivide the exact existing meadow boundary. Resampling its curved outline
@@ -140,7 +142,7 @@ traveler(-6.9*LAND_SCALE,10.45*LAND_SCALE,1.5,foreground.groundHeight(-6.9*LAND_
 const lookoutTerrain={scale:LAND_SCALE,verticalScale:HEIGHT_SCALE,waterLevel:-1000,
  height:(x,z)=>foreground.groundHeight(x+ledge.position.x,z+ledge.position.z)-ledge.position.y,
  radius:a=>LAND_SCALE/Math.hypot(Math.cos(a)/9.2,Math.sin(a)/2.3),
- contains:(x,z,margin=0)=>Math.hypot(x/(9.2*LAND_SCALE-margin),z/(2.3*LAND_SCALE-margin))<1};
+ contains:(x,z,margin=0)=>foreground.contains(x+ledge.position.x,z+ledge.position.z,margin)};
 const lookoutGroves=buildGroves(THREE,m,lookoutTerrain,{buildTree,count:400,islandKind:'satellite',reservedPositions:[[11,-.5,3],[15.5,-.4,3],[-30,2,3],[-22,6,3],[-16,0,3],[-7,8,3]]});ledge.add(lookoutGroves.group);groveControllers.push(lookoutGroves);
 
 // A quiet name is assembled from actual slender stone strokes and raycast
@@ -206,7 +208,7 @@ window.castleStyles=Object.keys(STYLES);window.castleState={style:DEFAULT_STYLE,
 window.setStyle=(id,{persist=true}={})=>{
  if(!Object.hasOwn(STYLES,id))throw new Error('Unknown castle style: '+id);
  const preset=palette.setStyle(id);foregroundGrass.color.copy(m.grass.color).multiplyScalar(.78);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
- const fogRange={original:[26,90],fantasy:[23,95],ink:[30,110],cozy:[35,120],ghibli:[24,100]}[id];
+ const fogRange={original:[32,100],fantasy:[35,110],ink:[36,110],cozy:[35,120],ghibli:[32,110]}[id];
  scene.fog.near=fogRange[0]*LAND_SCALE;scene.fog.far=fogRange[1]*LAND_SCALE;
  document.body.style.backgroundColor=new THREE.Color(preset.fog).lerp(new THREE.Color(0xfffbf1),.66).getStyle();
  atmosphere.setStyle(preset,id);
@@ -224,8 +226,8 @@ const focus=new THREE.Vector3(),cameraRight=new THREE.Vector3(),cameraUp=new THR
 let shadowZoom=-1,groveShadowRevision=-1;const shadowFocus=new THREE.Vector3(Infinity,Infinity,Infinity);
 let azimuthOffset=.24,elevation=.37,zoom=1,elapsed=0,last=performance.now(),paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
 window.animationConfig={duration:DURATION,fps:12};
-try{await atmosphere.ready;}catch(error){
- document.getElementById('loading').textContent='The sky could not load. Reload to try again.';
+try{await Promise.all([atmosphere.ready,meadowReady,rockReady]);}catch(error){
+ document.getElementById('loading').textContent='The painted textures could not load. Reload to try again.';
  throw error;
 }
 window.renderFrame=phase=>{
@@ -239,6 +241,7 @@ window.renderFrame=phase=>{
  terrain.updateDetail?.(camera,visibleWidth);landscapeDetails.updateDetail?.(camera,visibleWidth);botany.updateDetail?.(camera,visibleWidth);foreground.updateDetail(camera,visibleWidth);
  for(const controller of groveControllers)controller.updateDetail(camera,visibleWidth);
  landscapeDetails.animate(cycle);botany.animate(cycle);
+ for(const controller of travelerControllers)controller.animate(cycle);
  const nextShadowRevision=groveControllers.reduce((sum,controller)=>sum+controller.stats.shadowRevision,0);
  if(nextShadowRevision!==groveShadowRevision){renderer.shadowMap.needsUpdate=true;groveShadowRevision=nextShadowRevision;}
  if(zoom!==shadowZoom||!focus.equals(shadowFocus)){

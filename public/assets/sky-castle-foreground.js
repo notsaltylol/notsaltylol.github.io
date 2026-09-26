@@ -47,7 +47,7 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
       }
     }
   }
-  function groundHeight(x, z) {
+  function sampleGround(x, z) {
     const key = `${Math.floor((x - groundMinX) / groundCellSize)},${Math.floor((z - groundMinZ) / groundCellSize)}`;
     let height = -Infinity;
     for (const triangle of groundCells.get(key) || []) {
@@ -58,8 +58,11 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
         height = Math.max(height, triangle.ay + u * triangle.dy1 + v * triangle.dy2);
       }
     }
-    return height === -Infinity ? ledge.position.y : height;
+    return height;
   }
+  const groundHeight=(x,z)=>{const y=sampleGround(x,z);return y===-Infinity?ledge.position.y:y;};
+  const contains=(x,z,margin=0)=>[[0,0],[margin,0],[-margin,0],[0,margin],[0,-margin]]
+    .every(([dx,dz])=>sampleGround(x+dx,z+dz)!==-Infinity);
   let seed = 3109;
   const random = () => { seed = seed * 16807 % 2147483647; return seed / 2147483647; };
   const transform = new THREE.Object3D();
@@ -110,6 +113,7 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
     for (let i = 0; i < 5; i++) {
       const angle = random() * Math.PI * 2, r = Math.sqrt(random()) * radius;
       const x = cx + Math.cos(angle) * r, z = cz + Math.sin(angle) * r, y = groundHeight(x, z);
+      if(!contains(x,z,.35))continue;
       const s = .13 + random() * .19;
       shrubs.push({x, y:y+s*.42, z, scale:[s*1.3,s*.7,s], rotation:[0,random()*6,0]});
       if (i < 2) rocks.push({x:x+.18, y:y+.04, z:z+.15, scale:[s*.55,s*.5,s*.8], rotation:[0,random()*6,0]});
@@ -117,6 +121,7 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
     for (let i = 0; i < 15; i++) {
       const angle = random() * Math.PI * 2, r = Math.sqrt(random()) * radius * 1.5;
       const x = cx + Math.cos(angle) * r, z = cz + Math.sin(angle) * r;
+      if(!contains(x,z,.08))continue;
       const y = groundHeight(x,z), h = .10 + random() * .16, size = .024 + random() * .014;
       stems.push({x,y:y+h/2,z,scale:[.006,h,.006]});
       hearts.push({x,y:y+h,z,scale:[size*.6,size*.5,size*.6]});
@@ -164,6 +169,7 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
   }
   const fernCenters=patches.filter((_,i)=>i%2===0).map(([x,z])=>[x,z]);
   for(const [cx,cz] of fernCenters){
+    if(!contains(cx,cz,.5))continue;
     const base=groundHeight(cx,cz);
     for(let frond=0;frond<5;frond++){
       const angle=frond/5*Math.PI*2+random(), length=.30+random()*.16;
@@ -196,5 +202,5 @@ export function buildForegroundDetails(THREE, materials, ledge, {scale:landScale
   function updateDetail(camera,visibleWidth){
     for(const {mesh,level} of detailMeshes)mesh.visible=level==='always'||(level==='fine'?visibleWidth<75:visibleWidth>=75);
   }
-  return {group, groundHeight, updateDetail, stats:{patches:patches.length,shrubs:shrubs.length,flowers:hearts.length,fineLeaves:fineLeaves.length}};
+  return {group, groundHeight, contains, updateDetail, stats:{patches:patches.length,shrubs:shrubs.length,flowers:hearts.length,fineLeaves:fineLeaves.length}};
 }

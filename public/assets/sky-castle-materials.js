@@ -3,7 +3,7 @@
  *
  * Opaque surfaces retain Three.js' normal, light and shadow calculations. The
  * shader then compresses the diffuse illumination into art-directed bands and
- * adds broad pigment variation in object space. There are no painted billboards
+ * adds broad pigment variation plus optional world-mapped painted textures. There are no painted billboards
  * standing in for the island, no reflection maps and no photoreal specular layer.
  *
  * Call setStyle(id) without rebuilding geometry. Call animate(normalizedPhase)
@@ -66,6 +66,8 @@ export const styleInfo = Object.freeze(Object.fromEntries(
 
 const PIGMENT_GLSL = /* glsl */`
   varying vec3 vPaintPosition;
+  varying vec3 vPaintWorldPosition;
+  varying vec3 vPaintWorldNormal;
   varying vec2 vPaintUv;
   uniform float uPaintContrast;
   uniform float uPaintBands;
@@ -75,6 +77,14 @@ const PIGMENT_GLSL = /* glsl */`
   uniform float uPaintSurface;
   uniform vec3 uPaintShadow;
   uniform vec3 uPaintMoss;
+  uniform sampler2D uMeadowTexture;
+  uniform vec3 uMeadowMean;
+  uniform float uMeadowEnabled;
+  uniform float uMeadowStrength;
+  uniform sampler2D uRockTexture;
+  uniform vec3 uRockMean;
+  uniform float uRockEnabled;
+  uniform float uRockStrength;
 
   float paintHash(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.11, 0.23, 0.37));
@@ -96,6 +106,52 @@ const PIGMENT_GLSL = /* glsl */`
     float low = floor(s);
     float boundary = smoothstep(0.5 - uPaintSoftness, 0.5 + uPaintSoftness, fract(s));
     return (low + boundary) / steps;
+  }
+  // Three independently oriented physical scales keep the painted strokes
+  // attached to the world while preventing an obvious repeated square tile.
+  // Ordinary derivatives choose mip levels for each continuous coordinate set.
+  float paintSeamWeight(vec2 uv) {
+    vec2 toEdge = 0.5 - abs(fract(uv) - 0.5);
+    return smoothstep(0.008, 0.13, min(toEdge.x, toEdge.y));
+  }
+  vec3 samplePaintTile(sampler2D paintTexture, vec2 worldXZ, vec2 worldDx, vec2 worldDy, float frequency) {
+    const mat2 rotateA = mat2(0.80, 0.60, -0.60, 0.80);
+    const mat2 rotateB = mat2(0.93, -0.37, 0.37, 0.93);
+    vec2 q = worldXZ * frequency;
+    vec2 dx = worldDx * frequency, dy = worldDy * frequency;
+    vec2 crossingUV = rotateA * q * 1.43 + vec2(0.37, 0.71);
+    vec2 broadUV = rotateB * q * 0.67 + vec2(0.83, 0.19);
+    vec3 primary = textureGrad(paintTexture, q, dx, dy).rgb;
+    vec3 crossing = textureGrad(paintTexture, crossingUV, rotateA * dx * 1.43, rotateA * dy * 1.43).rgb;
+    vec3 broad = textureGrad(paintTexture, broadUV, rotateB * dx * 0.67, rotateB * dy * 0.67).rgb;
+    float blend = paintNoise(vec3(worldXZ * 0.034, 7.4));
+    // Suppress each sample near its own image edge. Other orientations carry
+    // the paint through that region, hiding an imperfect source tile's joins.
+    vec3 weights = vec3(0.66 - blend * 0.12, 0.20 + blend * 0.12, 0.14)
+      * vec3(paintSeamWeight(q), paintSeamWeight(crossingUV), paintSeamWeight(broadUV));
+    weights += vec3(0.012);
+    weights /= dot(weights, vec3(1.0));
+    return primary * weights.x + crossing * weights.y + broad * weights.z;
+  }
+  vec3 surfacePaint(sampler2D paintTexture, vec3 worldPosition, vec3 worldNormal, float frequency) {
+    // Compute derivatives before projection branches, then use explicit texture
+    // gradients. This avoids undefined mip selection on steep-bank boundaries.
+    vec3 worldDx = dFdx(worldPosition), worldDy = dFdy(worldPosition);
+    vec3 weights = pow(abs(normalize(worldNormal)), vec3(4.0));
+    weights /= max(dot(weights, vec3(1.0)), 0.0001);
+    vec3 painted = vec3(0.0);
+    if (weights.y > 0.002) painted += samplePaintTile(paintTexture, worldPosition.xz, worldDx.xz, worldDy.xz, frequency) * weights.y;
+    if (weights.x > 0.002) painted += samplePaintTile(paintTexture, worldPosition.zy + vec2(6.2, 1.4), worldDx.zy, worldDy.zy, frequency) * weights.x;
+    if (weights.z > 0.002) painted += samplePaintTile(paintTexture, worldPosition.xy + vec2(3.8, 7.1), worldDx.xy, worldDy.xy, frequency) * weights.z;
+    return painted;
+  }
+  vec3 paletteRelativePaint(vec3 painted, vec3 imageMean, float contrast, float chroma) {
+    const vec3 luminanceWeights = vec3(0.2126, 0.7152, 0.0722);
+    float paintedLuma = max(dot(painted, luminanceWeights), 0.015);
+    float meanLuma = max(dot(imageMean, luminanceWeights), 0.015);
+    float lightRatio = pow(clamp(paintedLuma / meanLuma, 0.28, 2.10), contrast);
+    vec3 relativeChroma = (painted / paintedLuma) / max(imageMean / meanLuma, vec3(0.08));
+    return vec3(lightRatio) * mix(vec3(1.0), clamp(relativeChroma, vec3(0.73), vec3(1.34)), chroma);
   }
   // Four octave pigment fields, filtered before their frequencies become
   // subpixel. Rotation between octaves prevents an obvious Cartesian grid.
@@ -152,11 +208,22 @@ const PIGMENT_GLSL = /* glsl */`
 
 /** Return live materials and their small style/animation controller. */
 export function createMaterials(THREE) {
+  // The fallback keeps the optional sampler valid before an image is loaded.
+  const whiteFallback = () => {
+    const texture = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    texture.needsUpdate = true;
+    return texture;
+  };
+  const paintLoadRevisions = { Meadow:0, Rock:0 };
   const shared = {
     uPaintContrast:{ value:0.78 }, uPaintBands:{ value:3 },
     uPaintSoftness:{ value:0.2 }, uPaintPigment:{ value:0.95 },
     uPaintGrain:{ value:0.08 }, uPaintShadow:{ value:new THREE.Color(PALETTES.fantasy.shadow) },
     uPaintMoss:{ value:new THREE.Color(PALETTES.fantasy.grass) },
+    uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
+    uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 },
+    uRockTexture:{ value:whiteFallback() }, uRockEnabled:{ value:0 },
+    uRockMean:{ value:new THREE.Color(0xb58a67) }, uRockStrength:{ value:0.86 },
   };
   const materials = {};
 
@@ -172,8 +239,18 @@ export function createMaterials(THREE) {
     material.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, shared, { uPaintSurface:{ value:surface } });
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec3 vPaintPosition;\nvarying vec2 vPaintUv;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvPaintPosition = position;\nvPaintUv = uv;');
+        .replace('#include <common>', '#include <common>\nvarying vec3 vPaintPosition;\nvarying vec3 vPaintWorldPosition;\nvarying vec3 vPaintWorldNormal;\nvarying vec2 vPaintUv;')
+        .replace('#include <begin_vertex>', /* glsl */`
+          #include <begin_vertex>
+          vPaintPosition = position;
+          vPaintUv = uv;
+          vec4 paintWorldPosition = vec4(position, 1.0);
+          #ifdef USE_INSTANCING
+            paintWorldPosition = instanceMatrix * paintWorldPosition;
+          #endif
+          vPaintWorldPosition = (modelMatrix * paintWorldPosition).xyz;
+          vPaintWorldNormal = inverseTransformDirection(transformedNormal, viewMatrix);
+        `);
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>\n${PIGMENT_GLSL}`)
         .replace('#include <color_fragment>', /* glsl */`
@@ -194,9 +271,9 @@ export function createMaterials(THREE) {
             float beds = paintNoise(vec3(pigmentPosition.x * 0.028,
               pigmentPosition.y * 0.27 + fold * 1.8, pigmentPosition.z * 0.028));
             float crag = rockFbm(geology * vec3(0.43, 0.19, 0.43), footprint * 0.61);
-            vec3 shale = vec3(0.73, 0.86, 0.98);
-            vec3 sandstone = vec3(1.14, 1.025, 0.86);
-            float mineralFamily = smoothstep(0.24, 0.75, mass * 0.65 + beds * 0.35);
+            vec3 shale = vec3(0.61, 0.78, 1.12);
+            vec3 sandstone = vec3(1.21, 1.035, 0.78);
+            float mineralFamily = smoothstep(0.30, 0.70, mass * 0.65 + beds * 0.35);
             vec3 mineralColor = mix(shale, sandstone, mineralFamily);
             float paleBed = smoothstep(0.57, 0.79, beds) * smoothstep(0.25, 0.52, mass);
             mineralColor = mix(mineralColor, vec3(1.16, 1.12, 1.01), paleBed * 0.38);
@@ -208,6 +285,14 @@ export function createMaterials(THREE) {
             float moss = smoothstep(-0.6, 1.6, pigmentPosition.y)
               * smoothstep(0.52, 0.71, mass * 0.45 + colony * 0.55);
             diffuseColor.rgb = mix(diffuseColor.rgb, uPaintMoss * 0.78, moss * 0.22 * uPaintPigment);
+            if (uRockEnabled > 0.5) {
+              // Roughly 1–3 meter painted fragments complement the real crags.
+              // Projection and mip levels stay fixed in physical world units.
+              vec3 painted = surfacePaint(uRockTexture, vPaintWorldPosition, vPaintWorldNormal, 0.115);
+              vec3 paintRatio = paletteRelativePaint(painted, uRockMean, 0.80, 0.48);
+              diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uRockStrength);
+              pigment *= 0.42;
+            }
           }
           if (uPaintSurface > 1.5 && uPaintSurface < 2.5) {
             // Connected meadow washes, rather than high-frequency camouflage.
@@ -230,6 +315,14 @@ export function createMaterials(THREE) {
             diffuseColor.rgb *= mix(vec3(1.0), meadowTint, uPaintPigment);
             pigment = (wash - 0.5) * 0.52
               + (brushPigment - 0.5) * uPaintGrain * 0.16 * brushVisibility;
+            if (uMeadowEnabled > 0.5) {
+              // Luminance carries the brushwork; relative chroma carries warm
+              // and cool strokes. The image never replaces a style's palette.
+              vec3 painted = surfacePaint(uMeadowTexture, vPaintWorldPosition, vPaintWorldNormal, 0.055);
+              vec3 paintRatio = paletteRelativePaint(painted, uMeadowMean, 0.78, 0.32);
+              diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uMeadowStrength);
+              pigment *= 0.52;
+            }
           }
           if (uPaintSurface > 4.5) {
             // Foliage keeps a quiet crown mass. Its geometry and cast shadows
@@ -302,7 +395,7 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v6-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v8-${surface}`;
     materials[key] = material;
   }
 
@@ -454,12 +547,60 @@ export function createMaterials(THREE) {
     shared.uPaintGrain.value = preset.grain;
     shared.uPaintShadow.value.setHex(preset.shadow);
     shared.uPaintMoss.value.setHex(preset.grass);
+    shared.uMeadowStrength.value = ({ original:0.70, fantasy:0.88, ink:0.22, cozy:0.38, ghibli:0.82 })[id] ?? 0.88;
+    shared.uRockStrength.value = ({ original:0.76, fantasy:0.92, ink:0.24, cozy:0.36, ghibli:0.84 })[id] ?? 0.92;
     waterUniforms.uWater.value.setHex(preset.water);
     waterUniforms.uFoam.value.setHex(preset.foam);
     waterUniforms.uCozy.value = id === 'cozy' ? 1 : 0;
     waterUniforms.uWaterPigment.value = preset.pigment;
     return styleInfo[id] || styleInfo.fantasy;
   }
+
+  /** Load an optional hand-painted color field without rebuilding any meshes.
+   * Returns the installed THREE.Texture; rejects on network/image failure while
+   * retaining the previous texture. The supplied image should be tileable.
+   */
+  async function loadPaintTexture(url, kind) {
+    const revision = ++paintLoadRevisions[kind];
+    const texture = await new THREE.TextureLoader().loadAsync(url);
+    texture.name = `hand-painted-${kind.toLowerCase()}`;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = 8;
+    // Calibrate against the actual image mean so warm/cool styles remain their
+    // own colors even when a replacement texture has a different base hue.
+    const mean = new THREE.Color(kind === 'Meadow' ? 0x77a451 : 0xb58a67);
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 32;
+      const context = canvas.getContext('2d', { willReadFrequently:true });
+      context.drawImage(texture.image, 0, 0, 32, 32);
+      const data = context.getImageData(0, 0, 32, 32).data;
+      const sample = new THREE.Color(); let red = 0, green = 0, blue = 0, total = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const weight = data[i + 3] / 255;
+        sample.setRGB(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, THREE.SRGBColorSpace);
+        red += sample.r * weight; green += sample.g * weight; blue += sample.b * weight; total += weight;
+      }
+      if (total > 0) mean.setRGB(red / total, green / total, blue / total);
+    } catch {
+      // Cross-origin images may be paintable but not readable. A stable palette-average
+      // calibration remains usable; the original local asset takes the path above.
+    }
+    const textureUniform = shared[`u${kind}Texture`];
+    if (revision !== paintLoadRevisions[kind]) { texture.dispose(); return textureUniform.value; }
+    const previous = textureUniform.value;
+    shared[`u${kind}Mean`].value.copy(mean);
+    textureUniform.value = texture;
+    shared[`u${kind}Enabled`].value = 1;
+    previous.dispose();
+    return texture;
+  }
+
+  const loadMeadowTexture = url => loadPaintTexture(url, 'Meadow');
+  const loadRockTexture = url => loadPaintTexture(url, 'Rock');
 
   function animate(phase) {
     // Keep exact integer endpoints identical, including negative phases.
@@ -469,5 +610,5 @@ export function createMaterials(THREE) {
     waterUniforms.uWorldScale.value.set(horizontal,vertical);
   }
   setStyle('fantasy');
-  return { materials, setStyle, animate, setWorldScale, styleInfo };
+  return { materials, setStyle, animate, setWorldScale, loadMeadowTexture, loadRockTexture, styleInfo };
 }

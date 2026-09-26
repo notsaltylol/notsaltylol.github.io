@@ -39,6 +39,7 @@ export function buildBotany(THREE, materials, terrain) {
     return !wetFootprint || terrain.height(x, z) > terrain.waterLevel + .055;
   }
   function allowed(x, z, clearance = .15, protectGardens = true) {
+    if(terrain.isReserved?.(x,z,clearance))return false;
     if (!terrain.contains(x, z, .24 + clearance) || !dryLand(x, z)) return false;
     if (Math.hypot((x - terrain.castleAnchor.x) / 1.52, (z - terrain.castleAnchor.z) / 1.25) < 1.03) return false;
     if (Math.hypot(x - 4.1 * worldScale, z + 2.6 * worldScale) < .57) return false;

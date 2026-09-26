@@ -221,7 +221,7 @@ export function buildLandscapeDetails(THREE, materials, terrain) {
   const targetGardens = Math.round(3 * areaScale);
   for (let attempt = 0; gardenCenters.length < targetGardens && attempt < targetGardens * 50; attempt++) {
     const x = range(-6.5, 6.5) * worldScale, z = range(-4.8, 4.8) * worldScale;
-    if (!terrain.contains(x, z, 1) || !dryGround(x, z)) continue;
+    if (!terrain.contains(x, z, 1) || !dryGround(x, z) || terrain.isReserved?.(x,z,.85)) continue;
     if (terrain.trailDistance && terrain.trailDistance(x, z) < .85) continue;
     if (Math.hypot(x - terrain.castleAnchor.x, z - terrain.castleAnchor.z) < 1.75) continue;
     if (z > 2.45 * worldScale && z < 2.93 * worldScale && x > -.85 * worldScale && x < 3.5 * worldScale) continue;
@@ -229,7 +229,7 @@ export function buildLandscapeDetails(THREE, materials, terrain) {
     gardenCenters.push([x, z]);
   }
   for (const [gx, gz] of gardenCenters) {
-    if (!terrain.contains(gx, gz, .8) || !dryGround(gx, gz)) continue;
+    if (!terrain.contains(gx, gz, .8) || !dryGround(gx, gz) || terrain.isReserved?.(gx,gz,.85)) continue;
     gardenCount++;
     const chunkSize = worldScale > 1 ? 16 : 64;
     const key = `${Math.floor((gx + chunkSize / 2) / chunkSize)},${Math.floor((gz + chunkSize / 2) / chunkSize)}`;

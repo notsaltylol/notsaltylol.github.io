@@ -1,9 +1,10 @@
 import { coherentNoise3D, fractalRock, cliffFormation } from './sky-castle-geology.js';
 
 /** Continuous rolling terrain, an excavated lake, and a connected river/fall. */
-export function buildTerrain(THREE, materials, { scale = 1 } = {}) {
+export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] } = {}) {
   if (!Number.isFinite(scale) || scale <= 0) throw new RangeError('Terrain scale must be a positive finite number');
   const verticalScale = scale, areaScale = scale * scale;
+  const isReserved=(x,z,margin=0)=>reservedAreas.some(area=>Math.hypot(x-area.x,z-area.z)<area.radius+margin);
   const group = new THREE.Group();
   group.name = 'living-floating-island';
   const waterLevel = 1.04 * verticalScale;
@@ -392,7 +393,7 @@ export function buildTerrain(THREE, materials, { scale = 1 } = {}) {
   const stoneCount = Math.max(1, Math.round(46 * areaScale)), flowerCount = Math.max(1, Math.round(380 * areaScale));
   const dummy = new THREE.Object3D();
   function legalScatter(x, z, flowers) {
-    return contains(x, z, flowers ? .45 : .25) &&
+    return contains(x, z, flowers ? .45 : .25) && !isReserved(x,z,flowers?.16:.4) &&
       height(x,z) >= waterLevel + (flowers ? .12 : .05) &&
       Math.hypot(x-castleAnchor.x,z-castleAnchor.z) >= (flowers ? 1.5 : 1.3) &&
       trailDistance(x,z) >= (flowers ? .26 : .50);
@@ -480,5 +481,5 @@ export function buildTerrain(THREE, materials, { scale = 1 } = {}) {
     meadowTriangles:indices.length / 3, refinedBankCells, cliffTriangles:cliffI.length / 3, lakeTriangles:waterI.length / 3, riverTriangles:riverI.length / 3,
     stonePatches:stonePatches.length, flowerPatches:flowerPatches.length, scatterAttempts, trailWidth:.34 };
   return { group, scale, verticalScale, height, contains, radius, lakeDistance, riverX, waterLevel, lip, castleAnchor,
-    toLocal, toWorld, trail, trailDistance, updateDetail, detailStats };
+    toLocal, toWorld, trail, trailDistance, isReserved, updateDetail, detailStats };
 }

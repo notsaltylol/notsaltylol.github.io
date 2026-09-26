@@ -45,6 +45,7 @@ export function buildGroves(THREE, materials, terrain, {
   const trailDistance = terrain.worldTrailDistance || terrain.trailDistance;
   function allowed(x, z, height = maxHeight) {
     const crownRadius = height * .47;
+    if(terrain.isReserved?.(x,z,crownRadius+.2))return false;
     if (!terrain.contains(x,z,crownRadius+.15)) return false;
     const y = terrain.height(x,z);
     if (!Number.isFinite(y)) return false;
