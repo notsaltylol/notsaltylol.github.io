@@ -51,12 +51,12 @@ const PALETTES = {
     pigment:0.82, grain:0.045, outlineOpacity:0.06, outlineWidth:0.004,
   },
   cozy: {
-    grass:0x93b77a, rock:0x95a48b, stone:0xe8d9b3, stoneLight:0xfaeacb,
+    grass:0x93b77a, rock:0xaaa38e, stone:0xe8d9b3, stoneLight:0xfaeacb,
     roof:0x8fbfaf, gold:0xd7b876, dark:0x738875, wood:0xb4a185,
     leaf:0x7e9f76, trunk:0x8b8c72, flower:0xe6ad9e, cloud:0xfaf0d9,
-    water:0x89c4c4, foam:0xeaf5de, shadow:0x879e94,
+    water:0x89c4c4, foam:0xeaf5de, shadow:0x819d92,
     sky:0xb8d9dd, fog:0xd9e4d9, outline:0x60755f,
-    ambient:1.8, sunlight:1.6, contrast:0.42, bands:0, softness:0.3,
+    ambient:1.8, sunlight:1.6, contrast:0.52, bands:0, softness:0.3,
     pigment:0.3, grain:0.035, outlineOpacity:0.48, outlineWidth:0.013,
   },
 };
@@ -487,30 +487,33 @@ export function createMaterials(THREE) {
           } else {
             paintedLight = paintBand(paintedLight * cloudLight);
           }
-          float shade = mix(0.99, mix(0.34, 1.13, paintedLight), uPaintContrast);
-          vec3 warmPigment = diffuseColor.rgb * mix(vec3(1.0), vec3(1.05, 1.01, 0.92), paintedLight * uPaintContrast);
-          vec3 outgoingLight = warmPigment * shade;
+          // Preserve the painted albedo through illumination: shadow tint is
+          // relative chroma, never an opaque wash replacing mineral brushwork.
+          // Each palette still controls its own contrast and light banding.
+          float shade = mix(0.99, mix(0.27, 1.16, paintedLight), uPaintContrast);
           float shadowMix = (1.0 - paintedLight) * uPaintContrast;
-          float rockShadow = (uPaintSurface > 0.5 && uPaintSurface < 1.5) ? 0.58 : 0.24;
-          vec3 coolPigment = uPaintShadow * max(0.32, pigmentLuma * 0.88);
-          outgoingLight = mix(outgoingLight, coolPigment, shadowMix * rockShadow);
-          if (uPaintSurface > 0.5 && uPaintSurface < 1.5) {
-            // A low-intensity open-sky bounce reveals crag orientation even
-            // where the sun is behind the cliff. It is world-fixed, not a
-            // camera-facing rim light, so it stays attached during the orbit.
+          float shadowLuma = max(dot(uPaintShadow, vec3(0.2126, 0.7152, 0.0722)), 0.025);
+          vec3 coolRatio = clamp(uPaintShadow / shadowLuma, vec3(0.62), vec3(1.55));
+          float rockSurface = (uPaintSurface > 0.5 && uPaintSurface < 1.5) ? 1.0 : 0.0;
+          vec3 illuminationTint = mix(vec3(1.0), vec3(1.10, 1.015, 0.88), paintedLight * uPaintContrast);
+          illuminationTint *= mix(vec3(1.0), coolRatio, shadowMix * mix(0.28, 0.44, rockSurface));
+          vec3 outgoingLight = diffuseColor.rgb * shade * illuminationTint;
+          if (rockSurface > 0.5) {
+            // Open-sky fill belongs to upward/open fracture planes. Recesses
+            // keep a quiet value floor rather than receiving a gray blanket.
             vec3 worldNormal = inverseTransformDirection(normal, viewMatrix);
             float skyFacing = dot(worldNormal, normalize(vec3(-0.55, 0.70, -0.45)));
-            float skyFill = smoothstep(-0.65, 1.0, skyFacing);
+            float skyFill = smoothstep(-0.40, 0.88, skyFacing);
             if (uPaintBands > 1.0 && uPaintSoftness < 0.04) skyFill = paintBand(skyFill);
-            vec3 bouncePigment = mix(diffuseColor.rgb, uPaintShadow * max(0.28, pigmentLuma), 0.22);
-            outgoingLight += bouncePigment * (0.025 + skyFill * 0.25)
+            vec3 bouncePigment = diffuseColor.rgb * mix(vec3(1.0), coolRatio, 0.30);
+            outgoingLight += bouncePigment * (0.015 + skyFill * 0.14)
               * (1.0 - paintedLight) * uPaintContrast;
           }
           outgoingLight += totalEmissiveRadiance;
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v15-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v16-${surface}`;
     materials[key] = material;
   }
 

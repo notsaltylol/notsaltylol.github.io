@@ -17,7 +17,7 @@ const W = 960, H = 600, DURATION = 60;
 const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE;
 const groveControllers=[];
 const travelerControllers=[];
-const sunOffset=new THREE.Vector3(28*LAND_SCALE,25*LAND_SCALE,8*LAND_SCALE);
+const sunOffset=new THREE.Vector3(-28*LAND_SCALE,25*LAND_SCALE,16*LAND_SCALE);
 const params = new URLSearchParams(location.search), capture = params.has('capture');
 const sceneContainer=document.getElementById('scene');
 let renderScale=capture?1:Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
@@ -46,7 +46,7 @@ const ambient = new THREE.HemisphereLight(0xfff3d7,0x739aaa,1.45);
 const sunlight = new THREE.DirectionalLight(0xfff0d3,2.8);
 sunlight.position.copy(sunOffset); sunlight.castShadow = true;
 sunlight.shadow.mapSize.set(4096,4096);
-Object.assign(sunlight.shadow.camera,{left:-16*LAND_SCALE,right:16*LAND_SCALE,top:17*LAND_SCALE,bottom:-14*LAND_SCALE,near:1,far:60*LAND_SCALE});
+Object.assign(sunlight.shadow.camera,{left:-16*LAND_SCALE,right:16*LAND_SCALE,top:17*LAND_SCALE,bottom:-14*LAND_SCALE,near:1,far:sunOffset.length()+30*LAND_SCALE});
 sunlight.shadow.bias = -.00004; sunlight.shadow.normalBias = .035;
 scene.add(ambient,sunlight,sunlight.target);
 const terrain = buildTerrain(THREE,m,{scale:LAND_SCALE,
@@ -224,6 +224,7 @@ const postScene=new THREE.Scene(),postCamera=new THREE.Camera();postScene.add(ne
 
 const descriptions={original:'Golden stone, olive gardens, matte pigment and warm sunlight.',fantasy:'Lush green terrain, soft toon shading, colored shadows and luminous water.',ink:'Cream and olive surfaces, crisp light bands and fine depth outlines.',cozy:'Gentle pastel colors, nearly flat illumination and soft contour lines.',ghibli:'Warm painted sunlight, natural greens, soft cool shadows and cream clouds.'};
 window.castleStyles=Object.keys(STYLES);window.castleState={style:DEFAULT_STYLE,mode:'3d',geometry:true,landScale:LAND_SCALE,landAreaScale:LAND_SCALE*LAND_SCALE,view:'overview'};
+let sceneReady=false;
 window.setStyle=(id,{persist=true}={})=>{
  if(!Object.hasOwn(STYLES,id))throw new Error('Unknown castle style: '+id);
  const preset=palette.setStyle(id);foregroundGrass.color.copy(m.grass.color).multiplyScalar(.78);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
@@ -238,7 +239,7 @@ window.setStyle=(id,{persist=true}={})=>{
  document.getElementById('description').textContent=descriptions[id];document.getElementById('illustration-link').href='./animation.html?style='+id;
  if(persist&&!capture){const url=new URL(location.href);url.searchParams.set('style',id);history.replaceState(null,'',url);try{localStorage.setItem('castle-3d-style',id);}catch{}}
  window.castleState.style=id;renderer.shadowMap.needsUpdate=true;
- if(window.renderFrame)window.renderFrame(window.castleState.phase||0);
+ if(sceneReady)window.renderFrame(window.castleState.phase||0);
 };
 for(const [id,preset] of Object.entries(STYLES)){const button=document.createElement('button');button.type='button';button.dataset.style=id;button.textContent=preset.label;button.addEventListener('click',()=>window.setStyle(id));document.getElementById('style-picker').append(button);}
 let preferred=params.get('style');if(!preferred&&!capture){try{preferred=localStorage.getItem('castle-3d-style');}catch{}}
@@ -295,7 +296,28 @@ window.renderFrame=phase=>{
  renderer.setRenderTarget(null);renderer.render(postScene,postCamera);
  window.castleState.drawCalls=renderer.info.render.calls;window.castleState.triangles=renderer.info.render.triangles;
 };
-window.renderFrame(0);
+// Prepare existing offscreen material variants with the real color target and
+// populated lights before showing the scene. Fine tree geometry stays lazy.
+// Retain the instanced, double-sided shadow program used by distant leaves.
+// This single-triangle proxy is compiled only and never added to the scene.
+const shadowWarmupMaterial=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking,side:THREE.DoubleSide});
+const shadowWarmupGeometry=new THREE.BufferGeometry();
+shadowWarmupGeometry.setAttribute('position',new THREE.Float32BufferAttribute([0,0,0,1,0,0,0,1,0],3));
+const shadowWarmupProxy=new THREE.InstancedMesh(shadowWarmupGeometry,shadowWarmupMaterial,1);
+const warmupTarget=renderer.getRenderTarget();
+renderer.setRenderTarget(target);
+try{
+ await renderer.compileAsync(scene,camera);
+ // Shadow depth has no fog; match its context without changing the shown scene.
+ const shadowWarmupFog=scene.fog;scene.fog=null;
+ let shadowWarmupPending;
+ try{shadowWarmupPending=renderer.compileAsync(shadowWarmupProxy,camera,scene);}finally{scene.fog=shadowWarmupFog;}
+ await shadowWarmupPending;
+}finally{
+ renderer.setRenderTarget(warmupTarget);
+ shadowWarmupGeometry.dispose();
+}
+window.renderFrame(0);sceneReady=true;
 document.getElementById('loading')?.remove();renderer.domElement.style.visibility='visible';
 const pause=document.getElementById('pause');function updatePause(){pause.textContent=paused?'Play motion':'Pause motion';pause.setAttribute('aria-pressed',String(paused));}updatePause();
 pause.addEventListener('click',()=>{paused=!paused;updatePause();});
