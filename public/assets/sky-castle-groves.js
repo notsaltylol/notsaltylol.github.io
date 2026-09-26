@@ -16,9 +16,9 @@ export function buildGroves(THREE, materials, terrain, {
   reservedPositions = [],
   heightRange = [.9, 1.8],
   seed = 61247,
-  detailWidth = 42,
-  detailTriangleBudget = 650000,
-  maxDetailedTrees = 96,
+  detailWidth = 60,
+  detailTriangleBudget = 1800000,
+  maxDetailedTrees = 240,
 } = {}) {
   const group = new THREE.Group();
   group.name = `${islandKind}-instanced-groves`;
@@ -96,10 +96,12 @@ export function buildGroves(THREE, materials, terrain, {
     if(!allowed(x,z,height)||!clearNeighbor(x,z,height))continue;
     // Wide, smooth gaps make distinct stands, not a uniform carpet of trees.
     if(Math.sin(x/(bound*.15)+.7)*Math.cos(z/(bound*.13)-.4)<-.73)continue;
-    const tx=Math.floor(x/tileSize),tz=Math.floor(z/tileSize),key=cellKey(tx,tz);
+    const tx=Math.floor(x/tileSize),tz=Math.floor(z/tileSize);
+    const habitat=Math.sin(x*.07+Math.cos(z*.05))+Math.cos(z*.09-x*.025);
+    const selector=random(),variant=selector<(habitat>.4?.30:.08)?3:Math.floor(random()*3);
+    const key=cellKey(tx,tz)+","+variant;
     if(!tiles.has(key)) {
-      const hash=Math.abs((tx*73856093)^(tz*19349663)^Math.floor(seed));
-      tiles.set(key,{key,variant:hash%4,trees:[],low:[],high:[],signature:null,inView:true,sphere:new THREE.Sphere()});
+      tiles.set(key,{key,variant,trees:[],low:[],high:[],signature:null,inView:true,sphere:new THREE.Sphere()});
     }
     const tile=tiles.get(key);
     const tree={id:trees.length,x,y:terrain.height(x,z)-.018,z,height,yaw:random()*Math.PI*2,
@@ -133,11 +135,12 @@ export function buildGroves(THREE, materials, terrain, {
       for(let j=0;j<=9;j++){const t=j/9;profile.push(new THREE.Vector2(.15*Math.pow(Math.sin(t*Math.PI),.75)*(1.17-.35*t),.20+.8*t));}
       crown=new THREE.LatheGeometry(profile,10);
     } else {
-      crown=new THREE.SphereGeometry(1,12,8);
+      crown=new THREE.SphereGeometry(1,20,12);
       const p=crown.attributes.position;
       for(let j=0;j<p.count;j++){
         const x=p.getX(j),y=p.getY(j),z=p.getZ(j),a=Math.atan2(z,x);
-        const ripple=1+.075*Math.sin(a*3+variantSeed)*(1-y*y)+.045*Math.cos(a*7+y*4+variantSeed);
+        const ripple=1+.10*Math.sin(a*3+variantSeed)*(1-y*y)+.085*Math.cos(a*7+y*4+variantSeed)
+          +.030*Math.sin(a*13-y*11+variantSeed)*Math.sqrt(Math.max(0,1-y*y));
         p.setXYZ(j,(x*ripple+y*.14)*.408+.045,(y+.045*Math.cos(a*5+variantSeed)*(1-y*y)+x*.09)*.242+.74,z*ripple*.310);
       }
     }

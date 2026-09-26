@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three/three.module.js';
 import { createMaterials } from './sky-castle-materials.js';
+import { createAtmosphere } from './sky-castle-atmosphere.js';
 import { buildTerrain } from './sky-castle-terrain.js';
 import { buildCastle, buildTree, buildPavilion } from './sky-castle-models.js';
 import { buildLandscapeDetails } from './sky-castle-details.js';
@@ -12,9 +13,13 @@ import { STYLES, DEFAULT_STYLE } from './castle-styles.js';
 const W = 960, H = 600, DURATION = 60;
 const LAND_SCALE=10, HEIGHT_SCALE=LAND_SCALE, HALF_WIDTH=14*LAND_SCALE;
 const groveControllers=[];
+const sunOffset=new THREE.Vector3(15*LAND_SCALE,21*LAND_SCALE,11*LAND_SCALE);
 const params = new URLSearchParams(location.search), capture = params.has('capture');
+const sceneContainer=document.getElementById('scene');
+let renderScale=capture?1:Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
+let renderWidth=Math.floor(W*renderScale),renderHeight=Math.floor(H*renderScale);
 const renderer = new THREE.WebGLRenderer({ antialias:true, preserveDrawingBuffer:true });
-renderer.setSize(W,H); renderer.setPixelRatio(1);
+renderer.setSize(W,H); renderer.setPixelRatio(renderScale);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.NoToneMapping;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -24,8 +29,8 @@ renderer.domElement.style.width = '100%'; renderer.domElement.style.height = 'au
 renderer.domElement.style.touchAction = 'none';
 renderer.domElement.tabIndex = 0;
 renderer.domElement.setAttribute('aria-label','3D sky castle. Drag or use arrow keys to orbit. Shift-drag or shift-arrow to pan. Use plus and minus to zoom.');
-document.getElementById('scene').appendChild(renderer.domElement);
-document.getElementById('loading')?.remove();
+sceneContainer.appendChild(renderer.domElement);
+renderer.domElement.style.visibility='hidden';
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xb4dce4, 40*LAND_SCALE, 90*LAND_SCALE);
 const camera = new THREE.OrthographicCamera(-HALF_WIDTH,HALF_WIDTH,HALF_WIDTH*H/W,-HALF_WIDTH*H/W,.1,180*LAND_SCALE);
@@ -33,10 +38,10 @@ const palette = createMaterials(THREE), m = palette.materials;
 palette.setWorldScale(LAND_SCALE,HEIGHT_SCALE);
 const ambient = new THREE.HemisphereLight(0xfff3d7,0x739aaa,1.45);
 const sunlight = new THREE.DirectionalLight(0xfff0d3,2.8);
-sunlight.position.set(-10*LAND_SCALE,18*LAND_SCALE,12*LAND_SCALE); sunlight.castShadow = true;
-sunlight.shadow.mapSize.set(2048,2048);
+sunlight.position.copy(sunOffset); sunlight.castShadow = true;
+sunlight.shadow.mapSize.set(4096,4096);
 Object.assign(sunlight.shadow.camera,{left:-16*LAND_SCALE,right:16*LAND_SCALE,top:17*LAND_SCALE,bottom:-14*LAND_SCALE,near:1,far:60*LAND_SCALE});
-sunlight.shadow.bias = -.00015; sunlight.shadow.normalBias = .035;
+sunlight.shadow.bias = -.00004; sunlight.shadow.normalBias = .035;
 scene.add(ambient,sunlight,sunlight.target);
 const terrain = buildTerrain(THREE,m,{scale:LAND_SCALE}); scene.add(terrain.group);
 const landscapeDetails = buildLandscapeDetails(THREE,m,terrain); scene.add(landscapeDetails.group);
@@ -98,8 +103,11 @@ traveler(-.85*LAND_SCALE,2.8*LAND_SCALE,1);traveler(-.56*LAND_SCALE,2.87*LAND_SC
 
 // A genuine foreground viewing ledge contributes the darkest depth layer.
 // It remains in world space, so orbiting reveals its relationship to the island.
+const foregroundGrass=m.grass.clone();
+foregroundGrass.onBeforeCompile=m.grass.onBeforeCompile;foregroundGrass.customProgramCacheKey=m.grass.customProgramCacheKey;
+foregroundGrass.name='painted-lookout-meadow';
 const ledge=new THREE.Group();ledge.position.set(-8*LAND_SCALE,-3.7*HEIGHT_SCALE,10.5*LAND_SCALE);
-for(const [upper,material,vertical] of [[true,m.leaf,.65*HEIGHT_SCALE],[false,m.rock,2.1*HEIGHT_SCALE]]){
+for(const [upper,material,vertical] of [[true,foregroundGrass,.65*HEIGHT_SCALE],[false,m.rock,2.1*HEIGHT_SCALE]]){
  const columns=upper?224:448,rows=upper?72:112;
  const geo=new THREE.SphereGeometry(1,columns,rows,0,Math.PI*2,upper?0:Math.PI/2,Math.PI/2);
  const p=geo.attributes.position;
@@ -153,9 +161,12 @@ for (const baseY of [-.55,-1.2,-1.9]) for (const baseCenter of [-4.1,-3.1,-2.1,-
 }
 if(inscription)word.forEach((letter,index)=>{
  const hit=inscription.hits[index],g=new THREE.Group();
- g.position.copy(hit.point).addScaledVector(inscription.normal,.08);
+ const facing=(hit.normal||hit.face.normal).clone().normalize();
+ const right=new THREE.Vector3().crossVectors(new THREE.Vector3(0,1,0),facing).normalize();
+ const up=new THREE.Vector3().crossVectors(facing,right).normalize();
+ g.position.copy(hit.point).addScaledVector(facing,.20);
  g.scale.setScalar(LAND_SCALE);
- g.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1),inscription.normal);
+ g.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right,up,facing));
  for(const [x1,y1,x2,y2] of glyphs[letter]){
   const a=new THREE.Vector3((x1-.3)*.24,y1*.30-.15,0),b=new THREE.Vector3((x2-.3)*.24,y2*.30-.15,0);
   const stroke=new THREE.Mesh(new THREE.CylinderGeometry(.011,.011,a.distanceTo(b),6),m.stoneLight);
@@ -164,19 +175,12 @@ if(inscription)word.forEach((letter,index)=>{
  scene.add(g);
 });
 
-// Procedural atmosphere surrounds the scene in every direction. Clouds are
-// shaded soft fields on a sky dome; the land and architecture are actual meshes.
-const skyUniforms={high:{value:new THREE.Color()},low:{value:new THREE.Color()},cloud:{value:new THREE.Color()},time:{value:0}};
-const skyMaterial=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:skyUniforms,
- vertexShader:'varying vec3 direction;void main(){direction=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
- fragmentShader:`varying vec3 direction;uniform vec3 high,low,cloud;uniform float time;
- float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
- float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
- float fbm(vec2 p){return .55*noise(p)+.28*noise(p*2.03)+.12*noise(p*4.01)+.05*noise(p*8.1);}
- void main(){vec3 d=normalize(direction);float h=clamp((d.y+.5)*1.7,0.,1.);vec3 c=mix(low,high,smoothstep(0.,.85,h));vec2 p=vec2(atan(d.z,d.x)*11.,d.y*31.);float n=fbm(p*1.4+vec2(.03*sin(time),0.));float a=smoothstep(.43,.63,n)*(1.-smoothstep(.35,.8,d.y));vec3 shade=mix(cloud*.74,cloud,smoothstep(.40,.62,n));c=mix(c,shade,a*.94);gl_FragColor=vec4(c,1.);
- #include <colorspace_fragment>
- }`});
-const sky=new THREE.Mesh(new THREE.SphereGeometry(100*LAND_SCALE,40,24),skyMaterial);sky.renderOrder=-10;scene.add(sky);
+// A painted environment surrounds the actual 3D terrain throughout the orbit.
+const atmosphere=createAtmosphere(THREE,{
+ scale:LAND_SCALE,sunDirection:sunOffset.clone().normalize(),
+ textureUrl:new URL('./sky-panorama-v1.png',import.meta.url).href
+});
+scene.add(atmosphere.group);
 
 // Soft mist at the waterfall foot is a small particle effect in 3D space.
 const mistTexture=document.createElement('canvas');mistTexture.width=mistTexture.height=64;const ctx=mistTexture.getContext('2d');const grad=ctx.createRadialGradient(32,32,0,32,32,32);grad.addColorStop(0,'rgba(255,255,255,.5)');grad.addColorStop(1,'rgba(255,255,255,0)');ctx.fillStyle=grad;ctx.fillRect(0,0,64,64);
@@ -185,14 +189,14 @@ const mists=[];for(let i=0;i<12;i++){const mist=new THREE.Sprite(mistMaterial);m
 
 // Depth silhouettes and fine paper grain are applied once after the shared
 // three-dimensional scene is rendered.
-const target=new THREE.WebGLRenderTarget(W,H,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
-target.depthTexture=new THREE.DepthTexture(W,H);target.depthTexture.type=THREE.UnsignedIntType;
+const target=new THREE.WebGLRenderTarget(renderWidth,renderHeight,{minFilter:THREE.LinearFilter,magFilter:THREE.LinearFilter});
+target.depthTexture=new THREE.DepthTexture(renderWidth,renderHeight);target.depthTexture.type=THREE.UnsignedIntType;
 target.samples = 4;
-const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},resolution:{value:new THREE.Vector2(W,H)},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0}};
+const postUniforms={colorMap:{value:target.texture},depthMap:{value:target.depthTexture},resolution:{value:new THREE.Vector2(renderWidth,renderHeight)},pixelRatio:{value:renderScale},ink:{value:0},inkColor:{value:new THREE.Color()},paper:{value:0}};
 const postMaterial=new THREE.ShaderMaterial({depthTest:false,depthWrite:false,uniforms:postUniforms,
  vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}',
- fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper;
- void main(){vec2 uv=vUv;vec2 px=1./resolution;vec3 c=texture2D(colorMap,uv).rgb;float d=texture2D(depthMap,uv).r;float edge=0.;edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(0.,px.y)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(0.,px.y)).r));c=mix(c,inkColor,smoothstep(.0005,.008,edge)*ink);float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
+ fragmentShader:`varying vec2 vUv;uniform sampler2D colorMap,depthMap;uniform vec2 resolution;uniform vec3 inkColor;uniform float ink,paper,pixelRatio;
+ void main(){vec2 uv=vUv;vec2 px=pixelRatio/resolution;vec3 c=texture2D(colorMap,uv).rgb;float d=texture2D(depthMap,uv).r;float edge=0.;edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(px.x,0.)).r));edge=max(edge,abs(d-texture2D(depthMap,uv+vec2(0.,px.y)).r));edge=max(edge,abs(d-texture2D(depthMap,uv-vec2(0.,px.y)).r));c=mix(c,inkColor,smoothstep(.0005,.008,edge)*ink);float grain=fract(sin(dot(gl_FragCoord.xy,vec2(12.9898,78.233)))*43758.5453)-.5;c*=1.+grain*paper;gl_FragColor=vec4(c,1.);
  #include <colorspace_fragment>
  }`});
 const postScene=new THREE.Scene(),postCamera=new THREE.Camera();postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),postMaterial));
@@ -201,9 +205,11 @@ const descriptions={original:'Golden stone, olive gardens, matte pigment and war
 window.castleStyles=Object.keys(STYLES);window.castleState={style:DEFAULT_STYLE,mode:'3d',geometry:true,landScale:LAND_SCALE,landAreaScale:LAND_SCALE*LAND_SCALE,view:'overview'};
 window.setStyle=(id,{persist=true}={})=>{
  if(!Object.hasOwn(STYLES,id))throw new Error('Unknown castle style: '+id);
- const preset=palette.setStyle(id);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
- skyUniforms.high.value.setHex(preset.sky);skyUniforms.low.value.setHex(preset.fog);skyUniforms.cloud.value.setHex(preset.cloud);
- if(id==='fantasy'){skyUniforms.high.value.setHex(0x2589d7);skyUniforms.low.value.setHex(0x8cd2e9);}
+ const preset=palette.setStyle(id);foregroundGrass.color.copy(m.grass.color).multiplyScalar(.78);scene.fog.color.setHex(preset.fog);ambient.intensity=preset.ambient;sunlight.intensity=preset.sunlight;
+ const fogRange={original:[26,90],fantasy:[23,95],ink:[30,110],cozy:[35,120],ghibli:[24,100]}[id];
+ scene.fog.near=fogRange[0]*LAND_SCALE;scene.fog.far=fogRange[1]*LAND_SCALE;
+ document.body.style.backgroundColor=new THREE.Color(preset.fog).lerp(new THREE.Color(0xfffbf1),.66).getStyle();
+ atmosphere.setStyle(preset,id);
  postUniforms.ink.value=preset.outlineOpacity;postUniforms.inkColor.value.setHex(preset.outline);postUniforms.paper.value=id==='ink'?.035:id==='cozy'?.012:id==='ghibli'?.012:0;
  document.querySelectorAll('[data-style]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.style===id)));
  document.getElementById('description').textContent=descriptions[id];document.getElementById('illustration-link').href='./animation.html?style='+id;
@@ -218,11 +224,15 @@ const focus=new THREE.Vector3(),cameraRight=new THREE.Vector3(),cameraUp=new THR
 let shadowZoom=-1,groveShadowRevision=-1;const shadowFocus=new THREE.Vector3(Infinity,Infinity,Infinity);
 let azimuthOffset=.24,elevation=.37,zoom=1,elapsed=0,last=performance.now(),paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
 window.animationConfig={duration:DURATION,fps:12};
+try{await atmosphere.ready;}catch(error){
+ document.getElementById('loading').textContent='The sky could not load. Reload to try again.';
+ throw error;
+}
 window.renderFrame=phase=>{
  const cycle=phase-Math.floor(phase),t=cycle*Math.PI*2;
  // Flow stays lively during the slow camera orbit; eight water cycles still
  // meet the camera at exactly the same seamless loop boundary.
- palette.animate(cycle*8);skyUniforms.time.value=t;
+ palette.animate(cycle*8);atmosphere.animate(cycle);
  window.castleState.phase=cycle;
  const angle=t+azimuthOffset;camera.position.set(Math.sin(angle)*32*LAND_SCALE,Math.sin(elevation)*32*LAND_SCALE+1,Math.cos(angle)*32*LAND_SCALE).add(focus);camera.zoom=zoom;camera.updateProjectionMatrix();camera.lookAt(focus);camera.updateMatrixWorld(true);
  const visibleWidth=HALF_WIDTH*2/zoom;
@@ -232,9 +242,9 @@ window.renderFrame=phase=>{
  const nextShadowRevision=groveControllers.reduce((sum,controller)=>sum+controller.stats.shadowRevision,0);
  if(nextShadowRevision!==groveShadowRevision){renderer.shadowMap.needsUpdate=true;groveShadowRevision=nextShadowRevision;}
  if(zoom!==shadowZoom||!focus.equals(shadowFocus)){
-  sunlight.position.set(-10*LAND_SCALE,18*LAND_SCALE,12*LAND_SCALE).add(focus);sunlight.target.position.copy(focus);
+  sunlight.position.copy(sunOffset).add(focus);sunlight.target.position.copy(focus);
   const span=Math.max(18,18*LAND_SCALE/zoom);Object.assign(sunlight.shadow.camera,{left:-span,right:span,top:span,bottom:-span});sunlight.shadow.camera.updateProjectionMatrix();
-  sunlight.shadow.normalBias=zoom>4?.018:.05;renderer.shadowMap.needsUpdate=true;shadowZoom=zoom;shadowFocus.copy(focus);
+  sunlight.shadow.normalBias=Math.max(.01,span*4/sunlight.shadow.mapSize.x);renderer.shadowMap.needsUpdate=true;shadowZoom=zoom;shadowFocus.copy(focus);
  }
  window.castleState.zoom=zoom;window.castleState.focus=focus.toArray();
  mists.forEach((mist,i)=>{const a=i*2.4+t;mist.position.set(terrain.lip.x+Math.sin(a)*.35*HEIGHT_SCALE,-5.8*HEIGHT_SCALE+Math.sin(t+i)*.18*HEIGHT_SCALE,terrain.lip.z+.5*HEIGHT_SCALE+Math.cos(a)*.20*HEIGHT_SCALE);});
@@ -242,6 +252,7 @@ window.renderFrame=phase=>{
  window.castleState.drawCalls=renderer.info.render.calls;window.castleState.triangles=renderer.info.render.triangles;
 };
 window.renderFrame(0);
+document.getElementById('loading')?.remove();renderer.domElement.style.visibility='visible';
 const pause=document.getElementById('pause');function updatePause(){pause.textContent=paused?'Play motion':'Pause motion';pause.setAttribute('aria-pressed',String(paused));}updatePause();
 pause.addEventListener('click',()=>{paused=!paused;updatePause();});
 function selectView(id){
@@ -277,4 +288,17 @@ renderer.domElement.addEventListener('keydown',event=>{
  if(event.key==='+'||event.key==='=')zoom=Math.min(16,zoom*1.2);if(event.key==='-')zoom=Math.max(.65,zoom/1.2);
  window.renderFrame(elapsed/(DURATION*1000));
 });
-if(!capture)renderer.setAnimationLoop(now=>{if(!paused){elapsed+=Math.min(now-last,100);window.renderFrame(elapsed/(DURATION*1000));}last=now;});
+if(!capture){
+ // Match the visible canvas on phones as well as Retina desktops; a narrow
+ // screen should not pay to render an invisible 1920-pixel-wide image.
+ const resizeObserver=new ResizeObserver(()=>{
+  const next=Math.min(window.devicePixelRatio||1,2)*Math.min(W,sceneContainer.clientWidth||W)/W;
+  if(Math.abs(next-renderScale)<.001)return;
+  renderScale=next;renderWidth=Math.floor(W*renderScale);renderHeight=Math.floor(H*renderScale);
+  renderer.setPixelRatio(renderScale);target.setSize(renderWidth,renderHeight);
+  postUniforms.resolution.value.set(renderWidth,renderHeight);postUniforms.pixelRatio.value=renderScale;
+  window.renderFrame(window.castleState.phase||0);
+ });
+ resizeObserver.observe(sceneContainer);
+ renderer.setAnimationLoop(now=>{if(!paused){elapsed+=Math.min(now-last,100);window.renderFrame(elapsed/(DURATION*1000));}last=now;});
+}
