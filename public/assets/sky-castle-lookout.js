@@ -36,7 +36,14 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
   function height(x,z){
     const u=x/scale,v=z/scale;
     const hill=(cx,cz,sx,sz)=>Math.exp(-(((u-cx)/sx)**2+((v-cz)/sz)**2));
-    return scale*(.24+.77*hill(-4,-.3,3.8,2.6)+.37*hill(3,-1.3,2.5,1.9)
+    // A shallow oblique hollow and unequal turf shoulders break the open
+    // viewing lawn into connected planes. The travelers keep a quiet footing.
+    const du=u-1.48,dv=v+.55-.20/scale,right=du*.777+dv*.629,forward=du*.629-dv*.777;
+    const across=forward-(.15-.16*right);
+    const hollow=-.055*Math.exp(-Math.pow((right-.65)/.60,4)-Math.pow(across/.23,2));
+    const shoulder=.031*Math.exp(-Math.pow((right-.83)/.47,2)-Math.pow((across-.27)/.23,2));
+    const clearingRelief=(hollow+shoulder)*smooth(.19,.34,Math.hypot(du,dv));
+    return scale*(clearingRelief+.24+.77*hill(-4,-.3,3.8,2.6)+.37*hill(3,-1.3,2.5,1.9)
       -.20*hill(.1,.4,1.6,1.6)+.025*u-.036*v
       +.12*hill(1.4,-.45,.9,.8)-.13*Math.max(0,u-1.2)
       +.048*coherentNoise3D(u*.8,17.3,v*.8));
