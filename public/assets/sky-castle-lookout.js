@@ -72,6 +72,19 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
   }
   const meadow=geometry(positions,uvs,indices);weldSeam(meadow,1,topRings);
   bakeHabitatPigment(THREE,meadow,createHabitat({kind:'lookout',scale}));
+  // Broad pigment masses follow the clearing's existing hollow and shoulder.
+  // Two normalized bytes per vertex keep this paint anchored to the land.
+  const clearingWash=new Uint8Array(meadow.attributes.position.count*2);
+  for(let i=0;i<meadow.attributes.position.count;i++) {
+    const p=meadow.attributes.position,du=p.getX(i)/scale-1.48,dv=p.getZ(i)/scale+.55-.20/scale;
+    const right=du*.777+dv*.629,forward=du*.629-dv*.777,across=forward-(.15-.16*right);
+    const hollow=Math.exp(-Math.pow((right-.73)/.83,4)-Math.pow((across+.035)/.43,2));
+    const shoulder=Math.exp(-Math.pow((right-.95)/.63,2)-Math.pow((across-.36)/.46,2));
+    const footing=smooth(.18,.37,Math.hypot(du,dv));
+    clearingWash[i*2]=Math.round(hollow*footing*255);
+    clearingWash[i*2+1]=Math.round(shoulder*(1-.6*hollow)*footing*255);
+  }
+  meadow.setAttribute('clearingWash',new THREE.Uint8BufferAttribute(clearingWash,2,true));
   const top=meadow.attributes.position,rockPositions=[],rockUvs=[],rockIndices=[];
   // Tilted, discontinuous beds narrow toward an offset keel. The large profile
   // is independent of fine fractal weathering and has no repeated cone tips.

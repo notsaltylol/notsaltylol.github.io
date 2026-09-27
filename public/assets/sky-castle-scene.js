@@ -99,8 +99,8 @@ traveler(-.85*LAND_SCALE,2.8*LAND_SCALE,1);traveler(-.56*LAND_SCALE,2.87*LAND_SC
 
 // A genuine foreground viewing ledge contributes the darkest depth layer.
 // It remains in world space, so orbiting reveals its relationship to the island.
-const foregroundGrass=m.habitatGround.clone();
-foregroundGrass.onBeforeCompile=m.habitatGround.onBeforeCompile;foregroundGrass.customProgramCacheKey=m.habitatGround.customProgramCacheKey;
+const foregroundGrass=m.clearingGround.clone();
+foregroundGrass.onBeforeCompile=m.clearingGround.onBeforeCompile;foregroundGrass.customProgramCacheKey=m.clearingGround.customProgramCacheKey;
 foregroundGrass.name='painted-lookout-meadow';
 const lookoutLand=buildLookoutTerrain(THREE,{grass:foregroundGrass,rock:m.rock},{scale:LAND_SCALE});
 // Offset the ridge laterally from the waterfall. The near-person preset can

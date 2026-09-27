@@ -94,6 +94,9 @@ const PIGMENT_GLSL = /* glsl */`
   uniform float uMeadowEnabled;
   uniform float uMeadowStrength;
   uniform float uHabitatStrength;
+  #ifdef TERRAIN_CLEARING
+    varying vec2 vClearingWash;
+  #endif
   #ifdef TERRAIN_HABITAT
     varying vec3 vTerrainHabitat;
   #endif
@@ -386,6 +389,15 @@ export function createMaterials(THREE) {
               habitatTint=mix(habitatTint,vec3(1.15,1.04,0.73),meadowEdge*0.65*(1.0-woodland));
               diffuseColor.rgb*=mix(vec3(1.0),habitatTint,uHabitatStrength);
             #endif
+            #ifdef TERRAIN_CLEARING
+              // Cool grass gathers in the hollow; warmer pigment catches the
+              // unequal shoulder. Existing brushwork feathers both transitions.
+              float coolWash=vClearingWash.x*(0.90+wash*0.20);
+              float warmWash=vClearingWash.y*(0.90+wash*0.20);
+              vec3 clearingTint=mix(vec3(1.0),vec3(0.52,0.80,1.14),coolWash);
+              clearingTint=mix(clearingTint,vec3(1.22,1.14,0.74),warmWash*0.78);
+              diffuseColor.rgb*=mix(vec3(1.0),clearingTint,uHabitatStrength*1.10);
+            #endif
             #ifdef TERRAIN_MEADOW
               // Rock grows out of the actual steep summit ribs. Interpolated
               // exposure and broken edges blend turf into the same surface,
@@ -531,8 +543,8 @@ export function createMaterials(THREE) {
     materials[key] = material;
   }
 
-  // Ground pigment is independent of grass instances. Both ground materials
-  // share the live palette while only the main meadow carries summit exposure.
+  // Ground pigment is independent of grass instances. Ground variants share
+  // the live palette; the main meadow alone carries summit exposure.
   materials.habitatGround=materials.grass.clone();materials.habitatGround.color=materials.grass.color;
   materials.habitatGround.name='painted-habitat-ground';
   materials.habitatGround.onBeforeCompile=shader=>{
@@ -543,6 +555,16 @@ export function createMaterials(THREE) {
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainHabitat=terrainHabitat;');
   };
   materials.habitatGround.customProgramCacheKey=()=>materials.grass.customProgramCacheKey()+'-habitat';
+  materials.clearingGround=materials.habitatGround.clone();materials.clearingGround.color=materials.grass.color;
+  materials.clearingGround.name='painted-clearing-ground';
+  materials.clearingGround.onBeforeCompile=shader=>{
+    materials.habitatGround.onBeforeCompile(shader);
+    shader.defines={...shader.defines,TERRAIN_CLEARING:1};
+    shader.vertexShader=shader.vertexShader.replace('#include <common>',
+      '#include <common>\nattribute vec2 clearingWash;\nvarying vec2 vClearingWash;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvClearingWash=clearingWash;');
+  };
+  materials.clearingGround.customProgramCacheKey=()=>materials.habitatGround.customProgramCacheKey()+'-clearing';
   materials.meadow=materials.habitatGround.clone();materials.meadow.color=materials.grass.color;
   materials.meadow.name='painted-summit-meadow';
   materials.meadow.onBeforeCompile=shader=>{
