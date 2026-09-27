@@ -1,5 +1,5 @@
 import { createDetailView } from './sky-castle-lod.js';
-import { createHabitat } from './sky-castle-habitat.js';
+import { createHabitat, bakeHabitatPigment } from './sky-castle-habitat.js';
 import { createGroundSampler } from './sky-castle-ground.js';
 import { buildWaterfallGeometry } from './sky-castle-waterfall.js';
 import { coherentNoise3D, fractalRock, cliffFormation } from './sky-castle-geology.js';
@@ -280,6 +280,7 @@ export function buildTerrain(THREE, materials, { scale = 1, reservedAreas = [] }
     const m = new THREE.Mesh(g, material); m.castShadow = m.receiveShadow = true; group.add(m); return m;
   }
   const meadowGeometry=geometry(positions,uvs,indices);
+  bakeHabitatPigment(THREE,meadowGeometry,createHabitat({kind:'main',scale}));
   const exposedRock=[];
   const meadowNormals=meadowGeometry.attributes.normal;
   for(let i=0;i<positions.length;i+=3){

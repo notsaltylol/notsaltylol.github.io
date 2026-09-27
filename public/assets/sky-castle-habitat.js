@@ -64,3 +64,18 @@ export function createHabitat({kind='main',scale=1,originX=0,originZ=0,radius=0}
   return {kind,sample,woodlandPatches:woods.map(p=>({x:originX+p[0]*unit,z:originZ+p[1]*unit,
     rx:p[2]*unit,rz:p[3]*unit,angle:p[4]}))};
 }
+
+/** Bake broad ground pigment from the same habitats that place vegetation.
+ * Three normalized bytes per vertex add no geometry or per-frame CPU work.
+ * Sample in each island's authored coordinates, before scene translation.
+ */
+export function bakeHabitatPigment(THREE, geometry, habitat) {
+  const positions=geometry.attributes.position, weights=new Uint8Array(positions.count*3), sample={};
+  for(let i=0;i<positions.count;i++) {
+    habitat.sample(positions.getX(i),positions.getZ(i),sample);
+    weights[i*3]=Math.round(sample.woodland*255);
+    weights[i*3+1]=Math.round(sample.woodlandEdge*255);
+    weights[i*3+2]=Math.round(sample.flowers*255);
+  }
+  geometry.setAttribute('terrainHabitat',new THREE.Uint8BufferAttribute(weights,3,true));
+}

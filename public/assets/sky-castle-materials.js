@@ -93,6 +93,10 @@ const PIGMENT_GLSL = /* glsl */`
   uniform vec3 uMeadowMean;
   uniform float uMeadowEnabled;
   uniform float uMeadowStrength;
+  uniform float uHabitatStrength;
+  #ifdef TERRAIN_HABITAT
+    varying vec3 vTerrainHabitat;
+  #endif
   uniform sampler2D uRockTexture;
   uniform vec3 uRockMean;
   uniform float uRockEnabled;
@@ -258,7 +262,7 @@ export function createMaterials(THREE) {
     uLookoutAnchor:{value:new THREE.Vector3(-6.9,-3.3,10.45)},
     uSummitAnchor:{value:new THREE.Vector3(-3.1,2.78,-1.7)},
     uMeadowTexture:{ value:whiteFallback() }, uMeadowEnabled:{ value:0 },
-    uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 },
+    uMeadowMean:{ value:new THREE.Color(0x77a451) }, uMeadowStrength:{ value:0.84 }, uHabitatStrength:{value:0.85},
     uRockTexture:{ value:whiteFallback() }, uRockEnabled:{ value:0 },
     uRockMean:{ value:new THREE.Color(0xb58a67) }, uRockStrength:{ value:0.86 },
   };
@@ -372,6 +376,16 @@ export function createMaterials(THREE) {
               diffuseColor.rgb *= mix(vec3(1.0), paintRatio, uMeadowStrength);
               pigment *= 0.52;
             }
+            #ifdef TERRAIN_HABITAT
+              // Grove bases, feathered woodland edges and flower meadows use
+              // the actual plant habitats. Existing wash breaks the broad
+              // transition softly; no new noise octaves or texture fetches.
+              float woodland=smoothstep(0.06,0.92,vTerrainHabitat.x+(wash-0.5)*0.20);
+              float meadowEdge=clamp(vTerrainHabitat.y*0.35+vTerrainHabitat.z,0.0,1.0);
+              vec3 habitatTint=mix(vec3(1.07,1.055,0.98),vec3(0.48,0.66,0.65),woodland);
+              habitatTint=mix(habitatTint,vec3(1.15,1.04,0.73),meadowEdge*0.65*(1.0-woodland));
+              diffuseColor.rgb*=mix(vec3(1.0),habitatTint,uHabitatStrength);
+            #endif
             #ifdef TERRAIN_MEADOW
               // Rock grows out of the actual steep summit ribs. Interpolated
               // exposure and broken edges blend turf into the same surface,
@@ -513,22 +527,32 @@ export function createMaterials(THREE) {
           if (uPaintSurface > 2.5 && uPaintSurface < 3.5) outgoingLight = mix(diffuseColor.rgb, outgoingLight, 0.40);
         `);
     };
-    material.customProgramCacheKey = () => `sky-castle-painted-v16-${surface}`;
+    material.customProgramCacheKey = () => `sky-castle-painted-v17-${surface}`;
     materials[key] = material;
   }
 
-  // Only the actual main meadow carries terrain exposure. Instanced grass,
-  // leaves and the smaller gardens keep their ordinary plant materials.
-  materials.meadow=materials.grass.clone();materials.meadow.color=materials.grass.color;
+  // Ground pigment is independent of grass instances. Both ground materials
+  // share the live palette while only the main meadow carries summit exposure.
+  materials.habitatGround=materials.grass.clone();materials.habitatGround.color=materials.grass.color;
+  materials.habitatGround.name='painted-habitat-ground';
+  materials.habitatGround.onBeforeCompile=shader=>{
+    materials.grass.onBeforeCompile(shader);
+    shader.defines={...shader.defines,TERRAIN_HABITAT:1};
+    shader.vertexShader=shader.vertexShader.replace('#include <common>',
+      '#include <common>\nattribute vec3 terrainHabitat;\nvarying vec3 vTerrainHabitat;')
+      .replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainHabitat=terrainHabitat;');
+  };
+  materials.habitatGround.customProgramCacheKey=()=>materials.grass.customProgramCacheKey()+'-habitat';
+  materials.meadow=materials.habitatGround.clone();materials.meadow.color=materials.grass.color;
   materials.meadow.name='painted-summit-meadow';
   materials.meadow.onBeforeCompile=shader=>{
-    materials.grass.onBeforeCompile(shader);
+    materials.habitatGround.onBeforeCompile(shader);
     shader.defines={...shader.defines,TERRAIN_MEADOW:1};
     shader.vertexShader=shader.vertexShader.replace('#include <common>',
       '#include <common>\nattribute float terrainRock;\nvarying float vTerrainRock;')
       .replace('#include <begin_vertex>','#include <begin_vertex>\nvTerrainRock=terrainRock;');
   };
-  materials.meadow.customProgramCacheKey=()=>materials.grass.customProgramCacheKey()+'-upland';
+  materials.meadow.customProgramCacheKey=()=>materials.habitatGround.customProgramCacheKey()+'-upland';
 
   const waterUniforms = {
     uPhase:{ value:0 }, uWater:{ value:new THREE.Color() },
@@ -819,6 +843,7 @@ export function createMaterials(THREE) {
     shared.uUplandRock.value.setHex(preset.rock);
     shared.uCloudStrength.value=({original:0.20,fantasy:0.26,ink:0.13,cozy:0.10,ghibli:0.24})[id]??0.26;
     shared.uMeadowStrength.value = ({ original:0.70, fantasy:0.88, ink:0.22, cozy:0.38, ghibli:0.82 })[id] ?? 0.88;
+    shared.uHabitatStrength.value = ({original:0.70,fantasy:0.85,ink:0.35,cozy:0.40,ghibli:0.75})[id] ?? 0.85;
     shared.uRockStrength.value = ({ original:0.76, fantasy:0.92, ink:0.24, cozy:0.36, ghibli:0.84 })[id] ?? 0.92;
     waterUniforms.uWater.value.setHex(preset.water);
     waterUniforms.uFoam.value.setHex(preset.foam);

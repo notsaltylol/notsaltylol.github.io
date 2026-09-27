@@ -1,3 +1,4 @@
+import { createHabitat, bakeHabitatPigment } from './sky-castle-habitat.js';
 import { coherentNoise3D, fractalRock } from './sky-castle-geology.js';
 
 /** A long, broken ridge with a rolling meadow and one watertight rock shell.
@@ -63,6 +64,7 @@ export function buildLookoutTerrain(THREE, materials, {scale=10}={}) {
     }
   }
   const meadow=geometry(positions,uvs,indices);weldSeam(meadow,1,topRings);
+  bakeHabitatPigment(THREE,meadow,createHabitat({kind:'lookout',scale}));
   const top=meadow.attributes.position,rockPositions=[],rockUvs=[],rockIndices=[];
   // Tilted, discontinuous beds narrow toward an offset keel. The large profile
   // is independent of fine fractal weathering and has no repeated cone tips.
