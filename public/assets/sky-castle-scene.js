@@ -71,8 +71,8 @@ const groves=buildGroves(THREE,m,terrain,{buildTree,count:900,reservedPositions:
 
 // Smaller landforms have individually authored shoulders and fractured bases.
 // Their surface sampler grounds the same small buildings and grove geometry.
-function satellite(x,y,z,size,seed) {
-  const land=buildSatelliteTerrain(THREE,m,{scale:LAND_SCALE,seed});
+function satellite(x,y,z,size,seed,baseProfile='split') {
+  const land=buildSatelliteTerrain(THREE,m,{scale:LAND_SCALE,seed,baseProfile});
   const group=land.group;group.position.set(x*LAND_SCALE,y*HEIGHT_SCALE,z*LAND_SCALE);group.scale.setScalar(size);
   const temple=buildPavilion(THREE,m);temple.scale.setScalar(.64);temple.position.y=land.height(0,0)-.025;group.add(temple);
   const tree=buildTree(THREE,m,{height:.85,kind:'cypress',seed});
@@ -81,7 +81,7 @@ function satellite(x,y,z,size,seed) {
     reservedPositions:[[0,0,1.3],[-.7*LAND_SCALE,-.25*LAND_SCALE,.8]]});
   group.add(grove.group);groveControllers.push(grove);scene.add(group);return group;
 }
-satellite(10,-.2,-4,.92,43);satellite(-11,-1.7,-6,.64,71);satellite(4,-1.8,-13,.45,97);
+satellite(10,-.2,-4,.92,43,'oblique');satellite(-11,-1.7,-6,.64,71);satellite(4,-1.8,-13,.45,97);
 
 // Brass celestial mechanism, deliberately subordinate to the castle silhouette.
 const machine=new THREE.Group(); machine.position.set(-.8*LAND_SCALE,terrain.height(-.8*LAND_SCALE,-2.8*LAND_SCALE),-2.8*LAND_SCALE);

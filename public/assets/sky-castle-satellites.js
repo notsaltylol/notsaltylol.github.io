@@ -5,7 +5,7 @@ import { coherentNoise3D, fractalRock } from './sky-castle-geology.js';
  * Meadow and rock share the exact same rim. height() interpolates the meadow
  * triangles, so physical-sized trees and buildings sit on the rendered ground.
  */
-export function buildSatelliteTerrain(THREE, materials, { scale = 10, seed = 43 } = {}) {
+export function buildSatelliteTerrain(THREE, materials, { scale = 10, seed = 43, baseProfile = 'split' } = {}) {
   if (!Number.isFinite(scale) || scale <= 0) throw new RangeError('Satellite scale must be positive and finite');
   if (!Number.isFinite(seed)) throw new RangeError('Satellite seed must be finite');
   const TAU = Math.PI * 2, group = new THREE.Group();
@@ -133,8 +133,8 @@ export function buildSatelliteTerrain(THREE, materials, { scale = 10, seed = 43 
     for(const buttress of buttresses)mass=Math.max(mass,
       Math.max(0,1-Math.abs(angleDistance(a,buttress.angle+t*.09))/buttress.width)*buttress.weight);
     const support=smooth(.24,.80,t),relief=smooth(.012,.12,t)*(1-smooth(.90,1,t));
-    // Separate buttresses end at unequal depths around a higher, concave core.
-    // No single axisymmetric point closes the bottom of the formation.
+    // Start with unequal buttresses around a higher, concave core.
+    // The optional oblique profile joins their lower tips after weathering.
     const bedDepth=Math.max(0,Math.min(1,t+Math.sin(t*Math.PI)*
       (.044*Math.sin(a*2+rotation)+.018*Math.sin(a*5+.6))));
     let r=radius(a)*(taper(bedDepth)+mass*support*.21);
@@ -151,6 +151,13 @@ export function buildSatelliteTerrain(THREE, materials, { scale = 10, seed = 43 
     let y=top[edge+1]*(1-t)-scale*(1.36+.73*mass+.07*Math.sin(a*3+rotation))*t;
     const erosion=fractalRock(x*.72+noiseOffset,y*.95,z*.72-noiseOffset)*.20*relief;
     x+=Math.cos(a)*erosion;z+=Math.sin(a)*erosion;y+=erosion*.28;
+    if(baseProfile==='oblique') {
+      // The lead satellite ends in a broad slanted fracture. Its upper shelves
+      // and horizontal footprint stay fixed while the paired hanging tips join.
+      const cutDepth=1.58+.10*Math.cos(a-rotation-.8)+.04*Math.cos(a*2+rotation);
+      const cutY=top[edge+1]*(1-t)-scale*cutDepth*t+erosion*.28;
+      y+=(cutY-y)*smooth(.56,.96,t);
+    }
     rockPositions.push(x,y,z);rockUvs.push(i/segments,t);
   }
   for(let ring=0;ring<rockRings;ring++)for(let i=0;i<segments;i++){
@@ -158,7 +165,7 @@ export function buildSatelliteTerrain(THREE, materials, { scale = 10, seed = 43 
     rockIndices.push(a,b,c,b,d,c);
   }
   const bottom=rockPositions.length/3;
-  rockPositions.push(shiftX,-scale*1.22,shiftZ);rockUvs.push(.5,1);
+  rockPositions.push(shiftX,-scale*(baseProfile==='oblique'?1.54:1.22),shiftZ);rockUvs.push(.5,1);
   for(let i=0;i<segments;i++)rockIndices.push(bottom,rockRings*(segments+1)+i,rockRings*(segments+1)+i+1);
   const rockGeometry=geometry(rockPositions,rockUvs,rockIndices);
   joinNormals(rockGeometry,0,segments+1,rockRings+1);
